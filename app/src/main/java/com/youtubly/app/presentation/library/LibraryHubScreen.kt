@@ -24,9 +24,11 @@ import com.youtubly.app.presentation.playlists.PlaylistsScreen
 
 /** Which page of the Library tab is open. A holder object so the widget / deep links can open Playlists directly. */
 object LibraryHubState {
-    var page by mutableIntStateOf(0)
     const val DOWNLOADS = 0
     const val PLAYLISTS = 1
+
+    /** Playlists is the page the Library tab opens on. */
+    var page by mutableIntStateOf(PLAYLISTS)
 }
 
 /** One bottom-bar tab for everything you keep: downloaded videos and playlists, switched with two chips. */
@@ -41,16 +43,16 @@ fun LibraryHubScreen(
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
-                selected = LibraryHubState.page == LibraryHubState.DOWNLOADS,
-                onClick = { LibraryHubState.page = LibraryHubState.DOWNLOADS },
-                label = { Text("Downloads") },
-                leadingIcon = { Icon(Icons.Rounded.DownloadForOffline, null) }
-            )
-            FilterChip(
                 selected = LibraryHubState.page == LibraryHubState.PLAYLISTS,
                 onClick = { LibraryHubState.page = LibraryHubState.PLAYLISTS },
                 label = { Text("Playlists") },
                 leadingIcon = { Icon(Icons.Rounded.PlaylistPlay, null) }
+            )
+            FilterChip(
+                selected = LibraryHubState.page == LibraryHubState.DOWNLOADS,
+                onClick = { LibraryHubState.page = LibraryHubState.DOWNLOADS },
+                label = { Text("Downloads") },
+                leadingIcon = { Icon(Icons.Rounded.DownloadForOffline, null) }
             )
         }
         Box(Modifier.weight(1f)) {
