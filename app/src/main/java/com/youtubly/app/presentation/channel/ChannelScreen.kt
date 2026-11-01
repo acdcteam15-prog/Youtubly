@@ -33,7 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material3.Icon
@@ -126,7 +126,7 @@ fun ChannelScreen(
         IconButton(
             onClick = onBack,
             modifier = Modifier.statusBarsPadding().padding(8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
-        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = Color.White) }
+        ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White) }
         if (state is ChannelUiState.Success) {
             IconButton(
                 onClick = viewModel::openSearch,
@@ -170,7 +170,7 @@ private fun ChannelSearchOverlay(
             Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onClose) { Icon(Icons.Rounded.ArrowBack, "Close search") }
+            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Close search") }
             androidx.compose.material3.OutlinedTextField(
                 value = state.query,
                 onValueChange = onQuery,

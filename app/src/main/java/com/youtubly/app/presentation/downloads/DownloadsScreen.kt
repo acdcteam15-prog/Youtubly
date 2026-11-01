@@ -82,6 +82,8 @@ fun DownloadsScreen(
     onOpen: (String) -> Unit,
     onOpenEditor: () -> Unit = {},
     onOpenAudio: () -> Unit = {},
+    /** Shown inside the Library tab: no own status-bar padding or big title (the tab's switcher is the header). */
+    embedded: Boolean = false,
     viewModel: DownloadsViewModel = hiltViewModel()
 ) {
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
@@ -99,10 +101,10 @@ fun DownloadsScreen(
         viewModel.events.collect { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().statusBarsPadding()) {
+        Row(Modifier.padding(start = 20.dp, end = 8.dp, top = if (embedded) 4.dp else 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                GradientTitle("Saved", style = MaterialTheme.typography.headlineMedium)
+                if (!embedded) GradientTitle("Saved", style = MaterialTheme.typography.headlineMedium)
                 Text("Swipe left to delete · long-press for more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             androidx.compose.material3.FilledTonalIconButton(onClick = onOpenAudio) {

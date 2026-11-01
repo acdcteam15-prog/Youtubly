@@ -122,7 +122,7 @@ private fun WidgetContent(context: Context, state: WidgetState) {
                 context = context,
                 label = "Continue watching",
                 title = cont.title,
-                subtitle = listOfNotNull(cont.channel.ifBlank { null }, cont.remainingSec.takeIf { it > 0 }?.let { "${formatLeft(it)} left" }).joinToString(" · "),
+                subtitle = com.youtubly.app.core.metaLine(cont.channel.ifBlank { null }, cont.remainingSec.takeIf { it > 0 }?.let { "${formatLeft(it)} left" }, separator = " · "),
                 thumb = cont.thumb,
                 progress = cont.progress,
                 openIntent = openVideoIntent(context, cont.url),

@@ -41,7 +41,7 @@ fun WhitelistScreen(onBack: () -> Unit, vm: WhitelistViewModel = hiltViewModel()
         topBar = {
             TopAppBar(
                 title = { Column { Text("Excluded channels"); Text("$total never blurred", style = MaterialTheme.typography.labelMedium) } },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.Rounded.ArrowBack, "Back") } },
+                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
                 actions = { if (total > 0) IconButton({ confirmClear = true }) { Icon(Icons.Rounded.DeleteSweep, "Clear all") } },
             )
         },

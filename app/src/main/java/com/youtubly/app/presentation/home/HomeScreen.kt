@@ -61,8 +61,12 @@ import androidx.compose.runtime.remember
 @Composable
 fun HomeScreen(
     onVideoClick: (Video) -> Unit,
+    /** Opens a channel group's merged feed (the group chips next to Home / Subscriptions). */
+    onOpenGroup: (String) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
+    val groupsVm: com.youtubly.app.presentation.library.ChannelGroupsViewModel = hiltViewModel()
+    val groups by groupsVm.groups.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val feed by viewModel.feed.collectAsStateWithLifecycle()
     val feeds by viewModel.feeds.collectAsStateWithLifecycle()
@@ -113,6 +117,16 @@ fun HomeScreen(
                             selectedContainerColor = MaterialTheme.colorScheme.primary,
                             selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                         )
+                    )
+                }
+                // Your channel groups: tap one for the newest videos of just those channels.
+                items(groups.keys.toList(), key = { "group_$it" }) { g ->
+                    FilterChip(
+                        selected = false,
+                        onClick = { onOpenGroup(g) },
+                        label = { Text(g) },
+                        leadingIcon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.Folder, null) },
+                        shape = MaterialTheme.shapes.extraLarge
                     )
                 }
             }

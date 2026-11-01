@@ -39,7 +39,7 @@ import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.Checkbox
-import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.MoreVert
@@ -85,6 +85,8 @@ fun PlaylistsScreen(
     onOpenYoutubePlaylist: (String) -> Unit = {},
     /** False when Playlists is a bottom-bar tab (nothing to go back to). */
     showBack: Boolean = true,
+    /** Shown inside the Library tab: no own status-bar padding or title. */
+    embedded: Boolean = false,
     viewModel: PlaylistsViewModel = hiltViewModel()
 ) {
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
@@ -107,11 +109,12 @@ fun PlaylistsScreen(
         uri?.let(viewModel::import)
     }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (embedded) Modifier else Modifier.statusBarsPadding())) {
         Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (showBack) IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
+            if (showBack) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
             else Spacer(Modifier.width(16.dp))
-            Text("Playlists", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+            if (embedded) Spacer(Modifier.weight(1f))
+            else Text("Playlists", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
             Box {
                 IconButton(onClick = { addMenu = true }) { Icon(Icons.Rounded.Add, "Add playlist") }
                 DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {

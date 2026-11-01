@@ -20,7 +20,7 @@ val Ink2 = Color(0xFF16161F)
 val Ink3 = Color(0xFF20202C)
 val Ink4 = Color(0xFF2B2B3A)
 val Mist = Color(0xFFEDEDF5)
-val MistDim = Color(0xFF9A9AB0)
+val MistDim = Color(0xFFB3B3C7)
 
 // Light surfaces
 val Paper0 = Color(0xFFFAFAFD)

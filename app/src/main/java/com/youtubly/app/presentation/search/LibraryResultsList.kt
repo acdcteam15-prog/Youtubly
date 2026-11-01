@@ -70,17 +70,17 @@ fun LibraryResults.toRows(
         add(LibraryHitRow("p_${p.id}", Icons.Rounded.PlaylistPlay, p.name, "Your playlist", null, null) { onPlaylist(p.id) })
     }
     saved.forEach { h ->
-        add(LibraryHitRow("s_${h.video.id}", Icons.Rounded.BookmarkAdded, h.video.title, "In “${h.playlistName}” · ${h.video.uploaderName}", h.video.thumbnailUrl, h.video.id) { onVideo(h.video) })
+        add(LibraryHitRow("s_${h.video.id}", Icons.Rounded.BookmarkAdded, h.video.title, com.youtubly.app.core.metaLine("In “${h.playlistName}”", h.video.uploaderName, separator = " · "), h.video.thumbnailUrl, h.video.id) { onVideo(h.video) })
     }
     downloads.forEach { d ->
         add(LibraryHitRow("d_${d.id}", Icons.Rounded.DownloadDone, d.title, "Downloaded" + (d.qualityLabel?.let { " · $it" } ?: ""), d.thumbnailUrl, null) { onDownload(d.id) })
     }
     history.forEach { v ->
-        add(LibraryHitRow("h_${v.id}", Icons.Rounded.History, v.title, "Watched · ${v.uploaderName}", v.thumbnailUrl, v.id) { onVideo(v) })
+        add(LibraryHitRow("h_${v.id}", Icons.Rounded.History, v.title, com.youtubly.app.core.metaLine("Watched", v.uploaderName, separator = " · "), v.thumbnailUrl, v.id) { onVideo(v) })
     }
     notes.forEach { n ->
         val video = Video(n.videoId, n.videoUrl, n.videoTitle, n.uploaderName, null, null, 0, -1, null)
-        add(LibraryHitRow("n_${n.id}", Icons.Rounded.EditNote, n.text, "Note at ${com.youtubly.app.domain.playback.Transcript.stamp(n.positionMs)} · ${n.videoTitle}", null, null) { onVideo(video) })
+        add(LibraryHitRow("n_${n.id}", Icons.Rounded.EditNote, n.text, com.youtubly.app.core.metaLine("Note at ${com.youtubly.app.domain.playback.Transcript.stamp(n.positionMs)}", n.videoTitle, separator = " · "), null, null) { onVideo(video) })
     }
 }
 
@@ -113,7 +113,7 @@ fun LibraryHitItem(row: LibraryHitRow, dense: Boolean = false) {
                     Icon(row.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
                     Spacer(Modifier.width(4.dp))
                 }
-                Text(row.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(row.subtitle, style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

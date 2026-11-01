@@ -167,7 +167,7 @@ fun LibraryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("You", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                    IconButton(onClick = onOpenSettings) { Icon(Icons.Rounded.Settings, "Settings") }
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Rounded.Settings, "Settings", tint = MaterialTheme.colorScheme.onSurface) }
                 }
             }
 
@@ -231,29 +231,6 @@ fun LibraryScreen(
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 20.dp)
                     )
-                }
-            }
-
-            // ---- Your stuff (Playlists is a tab now) ----
-            item {
-                Card {
-                    NavRow(Icons.Rounded.History, "History", "Search or clear what you watched", onOpenHistory)
-                    NavRow(Icons.Rounded.VisibilityOff, "Hidden videos & channels", "Undo \"Not interested\"", onOpenHidden)
-                    NavRow(Icons.Rounded.Folder, "Channel groups", "Lectures, news... one feed per group", { onOpenRoute(Screen.ChannelGroups.route) })
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                        val ctx = androidx.compose.ui.platform.LocalContext.current
-                        NavRow(Icons.Rounded.Link, "Open YouTube links here", "Android asks once: Add link, tick youtube.com") {
-                            // Android 12+ only opens unverified web links in an app once the user allows them here.
-                            runCatching {
-                                ctx.startActivity(
-                                    android.content.Intent(
-                                        android.provider.Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS,
-                                        android.net.Uri.parse("package:${ctx.packageName}")
-                                    )
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
@@ -358,8 +335,13 @@ private fun VideoRow(videos: List<Video>, onVideoClick: (Video) -> Unit) {
 
 @Composable
 internal fun ToggleRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val change = { v: Boolean ->
+        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)   // a light tick
+        onChange(v)
+    }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.medium).clickable { onChange(!checked) }.padding(vertical = 8.dp),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.medium).clickable { change(!checked) }.padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
@@ -373,7 +355,7 @@ internal fun ToggleRow(icon: ImageVector, title: String, subtitle: String, check
         Spacer(Modifier.width(12.dp))
         Switch(
             checked = checked,
-            onCheckedChange = onChange,
+            onCheckedChange = change,
             colors = SwitchDefaults.colors(checkedTrackColor = MaterialTheme.colorScheme.primary)
         )
     }

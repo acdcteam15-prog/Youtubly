@@ -166,12 +166,14 @@ fun VideoCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    listOfNotNull(
+                    // Each part is isolated, so an Arabic channel name can't scramble "81K views" next to it;
+                    // the line itself always runs left to right like the rest of the card.
+                    com.youtubly.app.core.metaLine(
                         video.uploaderName.takeIf { it.isNotBlank() },
                         video.viewCount.takeIf { it >= 0 }?.let { "${formatCount(it)} views" },
                         video.uploadDate?.takeIf { it.isNotBlank() }?.let(::prettyDate)
-                    ).joinToString("  ·  "),
-                    style = MaterialTheme.typography.bodySmall,
+                    ),
+                    style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

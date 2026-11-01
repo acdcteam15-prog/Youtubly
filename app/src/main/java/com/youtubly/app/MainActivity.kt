@@ -233,9 +233,15 @@ class MainActivity : ComponentActivity() {
                 "playlist" -> intent.data?.lastPathSegment?.toLongOrNull()?.let {
                     pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.PlaylistDetail.createRoute(it))
                 }
-                "playlists" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Playlists.route)
+                "playlists" -> {
+                    com.youtubly.app.presentation.library.LibraryHubState.page = com.youtubly.app.presentation.library.LibraryHubState.PLAYLISTS
+                    pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Downloads.route)
+                }
                 "updates" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Updates.route)
-                "downloads" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Downloads.route)
+                "downloads" -> {
+                    com.youtubly.app.presentation.library.LibraryHubState.page = com.youtubly.app.presentation.library.LibraryHubState.DOWNLOADS
+                    pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Downloads.route)
+                }
                 "audio" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.AudioLibrary.route)
                 "continue" -> lifecycleScope.launch {
                     // The most recent unfinished video in history; otherwise the History screen.

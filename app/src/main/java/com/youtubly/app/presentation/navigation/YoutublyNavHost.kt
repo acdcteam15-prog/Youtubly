@@ -40,13 +40,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.PlaylistPlay
+import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.MaterialTheme
@@ -79,8 +79,7 @@ import com.youtubly.app.presentation.components.OfflineBanner
 private val tabs = listOf(
     NavTab(Screen.Home.route, "Home", Icons.Outlined.Home, Icons.Rounded.Home),
     NavTab(Screen.Search.route, "Search", Icons.Outlined.Search, Icons.Rounded.Search),
-    NavTab(Screen.Downloads.route, "Saved", Icons.Outlined.DownloadForOffline, Icons.Rounded.DownloadForOffline),
-    NavTab(Screen.Playlists.route, "Playlists", Icons.Outlined.PlaylistPlay, Icons.Rounded.PlaylistPlay),
+    NavTab(Screen.Downloads.route, "Library", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
     NavTab(Screen.Editor.route, "Edit", Icons.Outlined.ContentCut, Icons.Rounded.ContentCut),
     NavTab(Screen.Library.route, "You", Icons.Outlined.PersonOutline, Icons.Rounded.Person)
 )
@@ -235,7 +234,10 @@ fun YoutublyNavHost(
                                 com.youtubly.app.presentation.update.UpdateBanner(onOpen = { nav.navigate(Screen.Updates.route) })
                                 com.youtubly.app.presentation.home.ResumeQueueBanner(onResume = { url, ms -> playerSheet.open(url, ms) })
                                 androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
-                                    HomeScreen(onVideoClick = { playerSheet.open(it.url) })
+                                    HomeScreen(
+                                        onVideoClick = { playerSheet.open(it.url) },
+                                        onOpenGroup = { g -> nav.navigate(Screen.ChannelGroup.createRoute(g)) }
+                                    )
                                 }
                             }
                         }
@@ -258,10 +260,13 @@ fun YoutublyNavHost(
                         }
                     }
                     composable(Screen.Downloads.route) {
-                        DownloadsScreen(
+                        // One "Library" tab: Downloads and Playlists behind two chips.
+                        com.youtubly.app.presentation.library.LibraryHubScreen(
                             onOpenAudio = { nav.navigate(Screen.AudioLibrary.route) },
-                                onOpen = { id -> nav.navigate(Screen.LocalPlayer.createRoute(id)) },
-                            onOpenEditor = { navigateTab(tabs.first { it.route == Screen.Editor.route }) }
+                            onOpenLocal = { id -> nav.navigate(Screen.LocalPlayer.createRoute(id)) },
+                            onOpenEditor = { navigateTab(tabs.first { it.route == Screen.Editor.route }) },
+                            onOpenPlaylist = { id -> nav.navigate(Screen.PlaylistDetail.createRoute(id)) },
+                            onOpenYoutubePlaylist = { url -> nav.navigate(Screen.YoutubePlaylist.createRoute(url)) }
                         )
                     }
                     composable(Screen.Editor.route) {
@@ -450,7 +455,6 @@ fun YoutublyNavHost(
                     composable(Screen.Playlists.route) {
                         com.youtubly.app.presentation.playlists.PlaylistsScreen(
                             onBack = { nav.popBackStack() },
-                            showBack = false,
                             onOpen = { id -> nav.navigate(Screen.PlaylistDetail.createRoute(id)) },
                             onOpenYoutubePlaylist = { url -> nav.navigate(Screen.YoutubePlaylist.createRoute(url)) }
                         )

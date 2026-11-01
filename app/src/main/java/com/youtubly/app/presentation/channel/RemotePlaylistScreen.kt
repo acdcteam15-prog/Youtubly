@@ -21,7 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -113,7 +113,7 @@ fun RemotePlaylistScreen(
         IconButton(
             onClick = onBack,
             modifier = Modifier.statusBarsPadding().padding(8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
-        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = Color.White) }
+        ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White) }
         if (ui.playlist != null) {
             IconButton(
                 onClick = { if (ui.searchOpen) viewModel.closeSearch() else viewModel.openSearch() },

@@ -26,6 +26,11 @@ import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.SettingsBackupRestore
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.WatchLater
 import androidx.compose.material.icons.rounded.SignalCellularAlt
@@ -45,6 +50,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
@@ -94,15 +101,48 @@ fun SettingsScreen(
     val autoCleanWatchLater by viewModel.autoCleanWatchLater.collectAsStateWithLifecycle()
     val appLockOn by com.youtubly.app.security.AppLockState.enabled.collectAsStateWithLifecycle()
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    var query by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
+    val keywords = remember { mapOf("Your library" to "history hidden videos channels groups lectures news open youtube links", "Features" to "features content blur faces music remover sponsorblock sponsors dearrow clickbait titles thumbnails", "Playback" to "playback seek step swipe gestures autoplay picture-in-picture pip audio screen off rotate fullscreen", "Data and quality" to "data quality wifi wi-fi mobile saver audio-only 360p", "Downloads" to "downloads wifi battery overnight rules pause storage", "Appearance" to "appearance theme dark light black accent colour color wallpaper material you tinted surfaces", "More" to "more bedtime night shorts watch later clean up app lock fingerprint incognito", "About" to "about updates version storage backup restore diagnostics errors") }
+    fun show(section: String) = query.isBlank() || com.youtubly.app.core.SearchText.matches(keywords[section].orEmpty() + " " + section, query)
     PlainBackground {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             SimpleTopBar("Settings", onBack)
+            androidx.compose.material3.OutlinedTextField(
+                value = query, onValueChange = { query = it }, singleLine = true,
+                placeholder = { Text("Search settings") },
+                leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                trailingIcon = { if (query.isNotEmpty()) androidx.compose.material3.IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, "Clear") } },
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)
+            )
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = 32.dp + com.youtubly.app.presentation.components.miniBarClearance())
             ) {
-                item { SectionTitle("Features") }
-                item {
+                if (show("Your library")) item { SectionTitle("Your library") }
+                if (show("Your library")) item {
+                    Card {
+                        NavRow(Icons.Rounded.History, "History", "Search or clear what you watched", { onOpenRoute(Screen.History.route) })
+                        NavRow(Icons.Rounded.VisibilityOff, "Hidden videos and channels", "Undo \"Not interested\"", { onOpenRoute(Screen.Hidden.route) })
+                        NavRow(Icons.Rounded.Folder, "Channel groups", "Lectures, news... one feed per group", { onOpenRoute(Screen.ChannelGroups.route) })
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            NavRow(Icons.Rounded.Link, "Open YouTube links here", "Android asks once: Add link, tick youtube.com") {
+                                // Android 12+ only opens unverified web links in an app once the user allows them here.
+                                runCatching {
+                                    ctx.startActivity(
+                                        android.content.Intent(
+                                            android.provider.Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS,
+                                            android.net.Uri.parse("package:${ctx.packageName}")
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (show("Features")) item { SectionTitle("Features") }
+                if (show("Features")) item {
                     Card {
                         NavRow(Icons.Rounded.FaceRetouchingOff, "Content blur", "Hide faces in thumbnails and videos", { onOpenRoute(Screen.BlurSettings.route) })
                         NavRow(
@@ -116,8 +156,8 @@ fun SettingsScreen(
                     }
                 }
 
-                item { SectionTitle("Playback") }
-                item {
+                if (show("Playback")) item { SectionTitle("Playback") }
+                if (show("Playback")) item {
                     Card {
                         SeekStepRow(seekStep, viewModel::setSeekStep)
                         SwipeActionsSettings(swipe, viewModel::setSwipeRight, viewModel::setSwipeLeft, viewModel::setSwipeDistance)
@@ -128,8 +168,8 @@ fun SettingsScreen(
                     }
                 }
 
-                item { SectionTitle("Data and quality") }
-                item {
+                if (show("Data and quality")) item { SectionTitle("Data and quality") }
+                if (show("Data and quality")) item {
                     Card {
                         QualityRow(Icons.Rounded.Wifi, "Wi-Fi quality", wifiQuality, viewModel::setWifiQuality)
                         QualityRow(Icons.Rounded.SignalCellularAlt, "Mobile data quality", mobileQuality, viewModel::setMobileQuality)
@@ -140,18 +180,18 @@ fun SettingsScreen(
                     }
                 }
 
-                item { SectionTitle("Downloads") }
-                item { Card { DownloadRulesSettings(downloadRules, viewModel::setDownloadRules) } }
+                if (show("Downloads")) item { SectionTitle("Downloads") }
+                if (show("Downloads")) item { Card { DownloadRulesSettings(downloadRules, viewModel::setDownloadRules) } }
 
-                item { SectionTitle("Appearance") }
-                item {
+                if (show("Appearance")) item { SectionTitle("Appearance") }
+                if (show("Appearance")) item {
                     Card {
                         AppearanceSettings(themeMode, accent, dynamicColor, tintedSurfaces, viewModel::setThemeMode, viewModel::setAccent, viewModel::setDynamicColor, viewModel::setTintedSurfaces)
                     }
                 }
 
-                item { SectionTitle("More") }
-                item {
+                if (show("More")) item { SectionTitle("More") }
+                if (show("More")) item {
                     Card {
                         ToggleRow(
                             Icons.Rounded.Bedtime, "Bedtime mode",
@@ -187,8 +227,8 @@ fun SettingsScreen(
                     }
                 }
 
-                item { SectionTitle("About") }
-                item {
+                if (show("About")) item { SectionTitle("About") }
+                if (show("About")) item {
                     Card {
                         NavRow(Icons.Rounded.SystemUpdate, "App updates", "Version ${com.youtubly.app.BuildConfig.VERSION_NAME}", { onOpenRoute(Screen.Updates.route) })
                         NavRow(Icons.Rounded.Storage, "Storage", "See and clear what the app keeps", { onOpenRoute(Screen.Storage.route) })

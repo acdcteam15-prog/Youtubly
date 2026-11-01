@@ -112,6 +112,14 @@ class BigFeaturesTest {
         assertEquals(2, GroupFeed.merge(listOf(a, b), limit = 2).size)
     }
 
+    // ---------- bidi ----------
+    @Test fun `meta line isolates each part so Arabic cannot reorder the numbers`() {
+        val line = com.youtubly.app.core.metaLine("\u0628\u0627\u0644\u0639\u0642\u0644", "81K views", null, "  ", "7 days ago")
+        val fsi = '\u2068'; val pdi = '\u2069'
+        assertEquals("${fsi}\u0628\u0627\u0644\u0639\u0642\u0644${pdi}  ·  ${fsi}81K views${pdi}  ·  ${fsi}7 days ago${pdi}", line)
+        assertEquals("", com.youtubly.app.core.metaLine(null, " "))
+    }
+
     // ---------- crash loop ----------
     @Test fun `two crashes in ten minutes is a loop, old ones are not`() {
         val now = 1_000_000_000L
