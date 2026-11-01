@@ -159,9 +159,11 @@ class StreamSourcePlanTest {
         )
         val plans = buildStreamPlans(info, PlaybackOptions(qualityHeight = 2160))
 
-        // No VideoPlusAudio at 2160p — HLS is the first (and only) candidate.
-        assertEquals(1, plans.size)
+        // No VideoPlusAudio at 2160p: the auto chain applies - HLS first, then the best adaptive pair as a fallback.
+        assertEquals(2, plans.size)
         assertTrue(plans[0] is StreamPlan.Hls)
+        assertTrue(plans[1] is StreamPlan.VideoPlusAudio)
+        assertEquals("1080p.url", (plans[1] as StreamPlan.VideoPlusAudio).videoUrl)
     }
 
     @Test

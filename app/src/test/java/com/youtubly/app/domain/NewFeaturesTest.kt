@@ -29,7 +29,8 @@ class NewFeaturesTest {
         val mid = EqPreset.BASS_CUT.gainDb(95f)   // between 60 Hz (-9) and 150 Hz (-6)
         assertTrue(mid > -9f && mid < -6f)
         // Equalizer API reports milli-Hz; the result is clamped to what the device allows.
-        assertEquals(-1500, EqPreset.BASS_CUT.bandLevelMb(60_000, -1500, 1500))
+        assertEquals(-900, EqPreset.BASS_CUT.bandLevelMb(60_000, -1500, 1500))   // -9 dB = -900 mB, inside the range
+        assertEquals(-500, EqPreset.BASS_CUT.bandLevelMb(60_000, -500, 500))     // a device with a narrower range clamps it
         assertEquals(0, EqPreset.OFF.bandLevelMb(60_000, -1500, 1500))
     }
 

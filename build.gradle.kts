@@ -89,6 +89,11 @@ android {
         }
     }
 
+    testOptions {
+        // JVM unit tests call code that logs through android.util.Log; return defaults instead of throwing.
+        unitTests.isReturnDefaultValues = true
+    }
+
     lint {
         // CI should not fail on style hints; real errors still fail the build.
         abortOnError = false
