@@ -1,6 +1,6 @@
 # Single place for every version. Dependabot (see .github/dependabot.yml) opens a PR whenever one is outdated.
 [versions]
-agp = "9.4.0"
+agp = "9.5.0"
 kotlin = "2.4.21"
 ksp = "2.3.13"
 hilt = "2.60.1"
