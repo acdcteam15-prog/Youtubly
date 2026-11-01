@@ -40,7 +40,9 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3   # licences only; Gradle downloads the SDK platform it needs
+      - uses: android-actions/setup-android@v3   # accepts the licences; Gradle downloads the SDK platform it needs
+        with:
+          packages: platform-tools
 
       - name: Make the Gradle wrapper executable
         run: chmod +x gradlew

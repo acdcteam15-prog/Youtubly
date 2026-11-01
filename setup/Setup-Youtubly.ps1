@@ -269,11 +269,16 @@ function Ensure-Signing([bool]$force = $false) {
 
 # ---------------------------------------------------------------- build + download
 function Show-BuildError([string]$runId) {
-    $log = & gh run view $runId --repo $script:Repo --log-failed 2>&1 | Out-String
-    $lines = $log -split "`r?`n" | Select-Object -Last 150
-    Set-Content -Path $ErrFile -Value $lines
+    $raw = & gh run view $runId --repo $script:Repo --log-failed 2>&1 | Out-String
+    $all = $raw -split "`r?`n"
+    # Drop the "job<TAB>step<TAB>timestamp" prefix and very long lines (licence texts), keep what matters.
+    $short = $all | ForEach-Object { $_ -replace '^[^\t]*\t[^\t]*\t\d{4}-\d\d-\d\dT[\d:.]+Z ?', '' } | Where-Object { $_.Length -lt 300 -and $_.Trim().Length -gt 0 }
+    $key  = @($short | Where-Object { $_ -match 'error|Error|ERROR|FAILED|What went wrong|Warning: Failed|^e: |Caused by' } | Select-Object -Last 40)
+    $tail = @($short | Select-Object -Last 40)
+    $out = @('=== KEY LINES ===') + $key + @('', '=== LAST LINES ===') + $tail
+    Set-Content -Path $ErrFile -Value $out
     Write-Host ''
-    Say '   The build failed. The error is saved here:' 'Red'
+    Say '   The build failed. The error is saved here (short, ready to copy):' 'Red'
     Say "   $ErrFile" 'Yellow'
     Say '   Open it, copy everything, and send it to Claude - it will be fixed and you press Rebuild-APK.bat again.' 'Yellow'
     Start-Process notepad.exe $ErrFile
