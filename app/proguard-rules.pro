@@ -12,8 +12,10 @@
 -dontwarn org.jsoup.**
 
 # ---------- LiteRT (successor of TensorFlow Lite; JNI looks these up by name) ----------
+-keep class org.tensorflow.lite.** { *; }
 -keep class com.google.ai.edge.litert.** { *; }
 -keepclasseswithmembernames class * { native <methods>; }
+-dontwarn org.tensorflow.lite.**
 -dontwarn com.google.ai.edge.litert.**
 
 # ---------- ML Kit face detection ----------

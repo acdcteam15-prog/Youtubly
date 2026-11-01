@@ -26,7 +26,7 @@ fun Modifier.sharedThumbnail(videoUrl: String): Modifier {
     val animated = LocalNavAnimatedScope.current ?: return this
     return with(shared) {
         this@sharedThumbnail.sharedElement(
-            state = rememberSharedContentState(key = "thumb-$videoUrl"),
+            sharedContentState = rememberSharedContentState(key = "thumb-$videoUrl"),
             animatedVisibilityScope = animated
         )
     }
