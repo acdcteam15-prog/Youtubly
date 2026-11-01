@@ -109,11 +109,45 @@ function Read-RepoFromGit {
     return $false
 }
 
+# Makes this folder's history fit on top of GitHub's. A freshly unzipped folder has its own unrelated history:
+# keep its files, but base them on what GitHub already has, so the push is accepted without overwriting anything.
+function Sync-Remote {
+    & git fetch origin main 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { return }          # GitHub repository is still empty
+    & git merge-base --is-ancestor origin/main HEAD 2>$null
+    if ($LASTEXITCODE -eq 0) { return }          # already on top of GitHub's history
+    & git merge-base HEAD origin/main *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Say '   This folder is a new copy of the project: attaching it to the existing repository history.' 'Gray'
+        & git reset --soft origin/main
+    } else {
+        & git pull --rebase --autostash origin main 2>$null | Out-Null
+    }
+}
+
+function Commit-All([string]$message) {
+    & git add -A
+    & git update-index --chmod=+x gradlew 2>$null     # Windows cannot mark it executable; the build machine needs that
+    & git diff --cached --quiet
+    if ($LASTEXITCODE -ne 0) { & git commit -m $message | Out-Null; return $true }
+    return $false
+}
+
 function Ensure-Repo {
     Step 'Step 3 - your GitHub repository (where the app is built)'
     if (-not (Test-Path (Join-Path $Root '.git'))) { & git init -b main | Out-Null }
+    & git config core.autocrlf false          # no line-ending conversion (and no warning spam)
     Ensure-GitIdentity
-    if (Read-RepoFromGit) { Ok "Repository: $($script:Repo)"; return }
+
+    if (Read-RepoFromGit) {
+        Ok "Repository: $($script:Repo)"
+        Sync-Remote
+        [void](Commit-All 'Youtubly')
+        & git push -u origin main
+        if ($LASTEXITCODE -ne 0) { throw 'Could not send the project to GitHub.' }
+        Ok 'Project is on GitHub'
+        return
+    }
 
     $name = Ask 'Name for the repository' 'Youtubly'
     Say '   Public: the app finds updates by itself (simplest, recommended).' 'Gray'
@@ -121,15 +155,15 @@ function Ensure-Repo {
     $private = YesNo 'Make it PRIVATE?' $false
     $full = "$($script:User)/$name"
 
-    & git add -A
-    & git diff --cached --quiet
-    if ($LASTEXITCODE -ne 0) { & git commit -m 'Youtubly' | Out-Null }
+    [void](Commit-All 'Youtubly')
     & git branch -M main
 
     & gh repo view $full *> $null
     if ($LASTEXITCODE -eq 0) {
-        Say "   $full already exists - connecting to it."
+        Say "   $full already exists - adding this version on top of it." 'Gray'
         & git remote add origin "https://github.com/$full.git"
+        Sync-Remote
+        [void](Commit-All 'Youtubly: new version')
         & git push -u origin main
     } else {
         $vis = '--public'
@@ -245,29 +279,17 @@ function Show-BuildError([string]$runId) {
     Start-Process notepad.exe $ErrFile
 }
 
-function Run-Release([string]$notes) {
-    Step 'Building the signed APK on GitHub (about 10 minutes - you can leave this window open)'
-    $start = (Get-Date).ToUniversalTime().AddSeconds(-10)
+# Ids of the most recent Release runs, newest first (no clocks involved).
+function Get-RunIds {
+    $json = GhOut run list --repo $script:Repo --workflow release.yml --limit 20 --json databaseId
+    $ids = @()
+    if ($json) { foreach ($r in ($json | ConvertFrom-Json)) { $ids += "$($r.databaseId)" } }
+    return $ids
+}
 
-    $started = $false
-    for ($i = 0; $i -lt 8 -and -not $started; $i++) {
-        & gh workflow run release.yml --repo $script:Repo --ref main -f "notes=$notes" 2>$null
-        if ($LASTEXITCODE -eq 0) { $started = $true } else { Say '   GitHub is still registering the build recipe, retrying...'; Start-Sleep 6 }
-    }
-    if (-not $started) { throw 'Could not start the build. Open the repository on github.com > Actions and check that Actions are enabled.' }
-
-    $id = $null
-    for ($i = 0; $i -lt 40 -and -not $id; $i++) {
-        Start-Sleep 3
-        $json = GhOut run list --repo $script:Repo --workflow release.yml --limit 5 --json databaseId,createdAt,event
-        if ($json) {
-            foreach ($r in ($json | ConvertFrom-Json)) {
-                if ($r.event -eq 'workflow_dispatch' -and ([datetime]$r.createdAt).ToUniversalTime() -ge $start) { $id = "$($r.databaseId)"; break }
-            }
-        }
-    }
-    if (-not $id) { throw 'The build did not appear on GitHub. Open the Actions tab of your repository.' }
-
+# Waits for a build to finish, then downloads its APK.
+function Follow-Run([string]$id) {
+    Say "   Build page: https://github.com/$($script:Repo)/actions/runs/$id" 'Gray'
     & gh run watch $id --repo $script:Repo --exit-status
     if ($LASTEXITCODE -ne 0) { Show-BuildError $id; throw 'Build failed (see above).' }
 
@@ -275,7 +297,7 @@ function Run-Release([string]$notes) {
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
     Get-ChildItem $OutDir -Filter *.apk -ErrorAction SilentlyContinue | Remove-Item -Force
     & gh release download --repo $script:Repo --pattern '*.apk' --dir $OutDir --clobber
-    if ($LASTEXITCODE -ne 0) { throw 'The build worked but the download failed. Open the Releases page and download the APK there.' }
+    if ($LASTEXITCODE -ne 0) { throw 'The build worked but the download failed. Open the Releases page (menu 5) and download the APK there.' }
     $apk = Get-ChildItem $OutDir -Filter *.apk | Select-Object -First 1
     Ok "Your APK: $($apk.FullName)"
     Write-Host ''
@@ -283,6 +305,29 @@ function Run-Release([string]$notes) {
     Say "   Or open this page ON THE PHONE and tap the APK: https://github.com/$($script:Repo)/releases/latest" 'Green'
     Say '   After this first install, updates arrive inside the app: Settings > App updates.' 'Green'
     Start-Process explorer.exe $OutDir
+}
+
+function Run-Release([string]$notes) {
+    Step 'Building the signed APK on GitHub (about 10 minutes - you can leave this window open)'
+    $before = Get-RunIds
+
+    $text = ''
+    $started = $false
+    for ($i = 0; $i -lt 8 -and -not $started; $i++) {
+        $text = (& gh workflow run release.yml --repo $script:Repo --ref main -f "notes=$notes" 2>&1 | Out-String)
+        if ($LASTEXITCODE -eq 0) { $started = $true } else { Say '   GitHub is still registering the build recipe, retrying...'; Start-Sleep 6 }
+    }
+    if (-not $started) { throw 'Could not start the build. Open the repository on github.com > Actions and check that Actions are enabled.' }
+
+    # GitHub prints the address of the new run; otherwise take the first run that did not exist before.
+    $id = $null
+    if ($text -match 'actions/runs/(\d+)') { $id = $Matches[1] }
+    for ($i = 0; $i -lt 30 -and -not $id; $i++) {
+        Start-Sleep 3
+        foreach ($x in (Get-RunIds)) { if ($before -notcontains $x) { $id = $x; break } }
+    }
+    if (-not $id) { throw 'The build was started but I could not find it. Choose 6 in the menu to follow the latest build.' }
+    Follow-Run $id
 }
 
 # ---------------------------------------------------------------- the menu actions
@@ -312,15 +357,23 @@ function Do-Rebuild {
         }
     }
 
+    Say "   Working folder: $Root" 'Gray'
+    & git config core.autocrlf false
+    Sync-Remote
+
     & git add -A
-    & git diff --cached --quiet
-    $changed = ($LASTEXITCODE -ne 0)
+    $files = @(& git diff --cached --name-only)
+    $changed = ($files.Count -gt 0)
     $notes = ''
     if ($changed) {
+        Say "   $($files.Count) changed file(s) will be sent, for example:" 'Gray'
+        $files | Select-Object -First 8 | ForEach-Object { Say "     $_" 'Gray' }
         $notes = Ask 'What changed? (shown in the update screen)' 'Improvements and fixes'
-        & git commit -m $notes | Out-Null
+        [void](Commit-All $notes)
     } else {
-        $notes = Ask 'Nothing new to send. Notes for this build' 'Rebuild'
+        Say '   No changes found in this folder compared with GitHub.' 'Yellow'
+        Say '   If you just unzipped a new version, make sure it was unzipped INTO THE FOLDER ABOVE (replace all files).' 'Yellow'
+        $notes = Ask 'Notes for this build' 'Rebuild'
     }
     & git push origin main
     if ($LASTEXITCODE -ne 0) { throw 'Could not send the changes to GitHub.' }
@@ -333,6 +386,16 @@ function Do-Signing {
     Ensure-Login
     if (-not (Read-RepoFromGit)) { throw 'No repository yet. Choose 1 first.' }
     Ensure-Signing $true
+}
+
+function Do-Follow {
+    Ensure-Tools
+    Ensure-Login
+    if (-not (Read-RepoFromGit)) { throw 'No repository yet. Choose 1 first.' }
+    Step 'Following the latest build'
+    $ids = Get-RunIds
+    if ($ids.Count -eq 0) { throw 'There is no build yet. Choose 1 or 2 first.' }
+    Follow-Run $ids[0]
 }
 
 function Show-LastError {
@@ -367,6 +430,7 @@ while ($true) {
     Write-Host '   3) Change or re-save the signing key'
     Write-Host '   4) Show the last build error'
     Write-Host '   5) Open the Releases page'
+    Write-Host '   6) A build is already running - wait for it and download the APK'
     Write-Host '   0) Close'
     $c = Read-Host '  Type a number and press Enter'
     switch ($c) {
@@ -375,6 +439,7 @@ while ($true) {
         '3' { Guard { Do-Signing } }
         '4' { Guard { Show-LastError } }
         '5' { Guard { Open-Releases } }
+        '6' { Guard { Do-Follow } }
         '0' { return }
         default { Say '   Please type one of the numbers above.' 'Yellow' }
     }
