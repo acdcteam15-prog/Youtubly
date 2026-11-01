@@ -268,6 +268,43 @@ class UserPreferences @Inject constructor(
     val showShortsTab: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyShowShortsTab] ?: false }
     suspend fun setShowShortsTab(v: Boolean) { context.userPrefsDataStore.edit { it[keyShowShortsTab] = v } }
 
+    // ---------------- per-video speed, watch-later cleanup, channel groups, app lock ----------------
+    private val keyVideoSpeeds = stringPreferencesKey("video_speeds_json")
+    private val keyAutoCleanWatchLater = booleanPreferencesKey("auto_clean_watch_later")
+    private val keyChannelGroups = stringPreferencesKey("channel_groups_json")
+    private val keyAutoDownloadUpdates = booleanPreferencesKey("auto_download_updates")
+
+    /** Video id → speed remembered for that one video (newest 300 are kept). Wins over channel and global speed. */
+    val videoSpeeds: Flow<Map<String, Float>> = context.userPrefsDataStore.data.map { decodeSpeeds(it[keyVideoSpeeds]) }
+    suspend fun setVideoSpeed(videoId: String, speed: Float?) {
+        context.userPrefsDataStore.edit { prefs ->
+            val map = LinkedHashMap(decodeSpeeds(prefs[keyVideoSpeeds]))
+            map.remove(videoId)                       // re-insert at the end = most recent
+            if (speed != null) map[videoId] = speed
+            while (map.size > 300) map.remove(map.keys.first())
+            prefs[keyVideoSpeeds] = encodeSpeeds(map)
+        }
+    }
+
+    /** Signed in: a video that is 90 % watched is removed from YouTube's Watch later list. */
+    val autoCleanWatchLater: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyAutoCleanWatchLater] ?: false }
+    suspend fun setAutoCleanWatchLater(v: Boolean) { context.userPrefsDataStore.edit { it[keyAutoCleanWatchLater] = v } }
+
+    /** Group name → channel URLs (see ChannelGroups). */
+    val channelGroups: Flow<Map<String, List<String>>> =
+        context.userPrefsDataStore.data.map { com.youtubly.app.domain.library.ChannelGroups.decode(it[keyChannelGroups]) }
+    suspend fun setChannelGroups(groups: Map<String, List<String>>) {
+        context.userPrefsDataStore.edit { it[keyChannelGroups] = com.youtubly.app.domain.library.ChannelGroups.encode(groups) }
+    }
+
+    /** The playlist a video was last saved to (for the one-tap "Save to <playlist>" in the share sheet). 0 = none. */
+    val lastPlaylistId: Flow<Long> = context.userPrefsDataStore.data.map { it[longPreferencesKey("last_playlist_id")] ?: 0L }
+    suspend fun setLastPlaylistId(v: Long) { context.userPrefsDataStore.edit { it[longPreferencesKey("last_playlist_id")] = v } }
+
+    /** Download a new build in the background on Wi-Fi so installing it is one tap. */
+    val autoDownloadUpdates: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyAutoDownloadUpdates] ?: true }
+    suspend fun setAutoDownloadUpdates(v: Boolean) { context.userPrefsDataStore.edit { it[keyAutoDownloadUpdates] = v } }
+
     // ---------------- app updates (GitHub Releases) ----------------
     private val keyAutoUpdateCheck = booleanPreferencesKey("auto_update_check")
     private val keySkippedBuild = intPreferencesKey("update_skipped_build")

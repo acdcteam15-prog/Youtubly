@@ -12,6 +12,8 @@ import com.youtubly.app.data.local.entity.DownloadEntity
 import com.youtubly.app.data.local.entity.EditJobEntity
 import com.youtubly.app.data.local.entity.PlaylistEntity
 import com.youtubly.app.data.local.entity.PlaylistFinishedItemEntity
+import com.youtubly.app.data.local.entity.VideoNoteEntity
+import com.youtubly.app.data.local.dao.VideoNoteDao
 import com.youtubly.app.data.local.entity.PlaylistItemEntity
 import com.youtubly.app.data.local.entity.SearchHistoryEntity
 import com.youtubly.app.data.local.entity.SubscriptionEntity
@@ -19,8 +21,8 @@ import com.youtubly.app.data.local.entity.WatchHistoryEntity
 
 @Database(
     entities = [DownloadEntity::class, WatchHistoryEntity::class, SubscriptionEntity::class, SearchHistoryEntity::class,
-        PlaylistEntity::class, PlaylistItemEntity::class, PlaylistFinishedItemEntity::class, EditJobEntity::class],
-    version = 11,
+        PlaylistEntity::class, PlaylistItemEntity::class, PlaylistFinishedItemEntity::class, EditJobEntity::class, VideoNoteEntity::class],
+    version = 12,
     exportSchema = false
 )
 abstract class YoutublyDatabase : RoomDatabase() {
@@ -86,6 +88,18 @@ abstract class YoutublyDatabase : RoomDatabase() {
             }
         }
 
+        /** v12: timestamped notes on videos. */
+        val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `video_notes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`videoId` TEXT NOT NULL, `videoUrl` TEXT NOT NULL, `videoTitle` TEXT NOT NULL, " +
+                        "`uploaderName` TEXT NOT NULL, `positionMs` INTEGER NOT NULL, `text` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_notes_videoId` ON `video_notes` (`videoId`)")
+            }
+        }
+
         /** v11: auto-remove-finished playlists, their Finished shelf, and the table of moved-out videos. */
         val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -115,6 +129,7 @@ abstract class YoutublyDatabase : RoomDatabase() {
     }
 
     abstract fun playlistDao(): PlaylistDao
+    abstract fun videoNoteDao(): VideoNoteDao
     abstract fun editJobDao(): EditJobDao
     abstract fun downloadDao(): DownloadDao
     abstract fun watchHistoryDao(): WatchHistoryDao

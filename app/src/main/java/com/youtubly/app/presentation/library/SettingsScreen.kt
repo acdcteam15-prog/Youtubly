@@ -2,6 +2,10 @@ package com.youtubly.app.presentation.library
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.PaddingValues
+import com.youtubly.app.presentation.components.SimpleTopBar
+import com.youtubly.app.presentation.components.PlainBackground
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -21,6 +25,8 @@ import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.SettingsBackupRestore
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.WatchLater
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Smartphone
@@ -84,62 +90,71 @@ fun SettingsScreen(
     val dataSaver by viewModel.dataSaver.collectAsStateWithLifecycle()
     val dataSaverAudioOnly by viewModel.dataSaverAudioOnly.collectAsStateWithLifecycle()
     val music by musicVm.settings.collectAsStateWithLifecycle()
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-
-    AuroraBackground {
-        Scaffold(
-            containerColor = androidx.compose.ui.graphics.Color.Transparent,
-            topBar = {
-                LargeTopAppBar(
-                    title = { Text("Settings") },
-                    navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
-                    scrollBehavior = scroll,
-                )
-            },
-        ) { pad ->
+    val autoCleanWatchLater by viewModel.autoCleanWatchLater.collectAsStateWithLifecycle()
+    val appLockOn by com.youtubly.app.security.AppLockState.enabled.collectAsStateWithLifecycle()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    PlainBackground {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            SimpleTopBar("Settings", onBack)
             LazyColumn(
-                Modifier.fillMaxSize().padding(pad).nestedScroll(scroll.nestedScrollConnection),
+                Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = 32.dp + com.youtubly.app.presentation.components.miniBarClearance())
             ) {
-                item { SectionTitle("Content blur") }
+                item { SectionTitle("Features") }
                 item {
-                    Card(Modifier.staggeredEntrance(0)) {
+                    Card {
                         NavRow(Icons.Rounded.FaceRetouchingOff, "Content blur", "Hide faces in thumbnails and videos", { onOpenRoute(Screen.BlurSettings.route) })
-                    }
-                }
-
-                item { SectionTitle("Music remover") }
-                item {
-                    Card(Modifier.staggeredEntrance(1)) {
                         NavRow(
                             if (music.enabled) Icons.Rounded.MusicOff else Icons.Rounded.MusicNote, "Music remover",
-                            if (music.enabled) "On · keeps voices, removes background music" else "Off · keep only voices in videos",
+                            if (music.enabled) "On - keeps voices, removes music" else "Off",
                             { onOpenRoute(Screen.MusicRemover.route) }
                         )
-                    }
-                }
-
-                item { SectionTitle("SponsorBlock") }
-                item {
-                    Card(Modifier.staggeredEntrance(2)) {
-                        ToggleRow(Icons.Rounded.Shield, "Auto-skip sponsors", "SponsorBlock", autoSkip, viewModel::setAutoSkip)
-                        Spacer(Modifier.height(14.dp))
-                        NavRow(Icons.Rounded.Tune, "SponsorBlock categories", "Choose which parts get skipped", { onOpenRoute(Screen.SponsorBlock.route) })
-                        Spacer(Modifier.height(14.dp))
-                        ToggleRow(Icons.Rounded.AutoAwesome, "DeArrow", "Replace clickbait titles & thumbnails", deArrow, viewModel::setDeArrow)
+                        NavRow(Icons.Rounded.Tune, "SponsorBlock", "Choose which parts get skipped", { onOpenRoute(Screen.SponsorBlock.route) })
+                        ToggleRow(Icons.Rounded.Shield, "Auto-skip sponsors", "", autoSkip, viewModel::setAutoSkip)
+                        ToggleRow(Icons.Rounded.AutoAwesome, "DeArrow", "Replace clickbait titles and thumbnails", deArrow, viewModel::setDeArrow)
                     }
                 }
 
                 item { SectionTitle("Playback") }
                 item {
-                    Card(Modifier.staggeredEntrance(3)) {
+                    Card {
                         SeekStepRow(seekStep, viewModel::setSeekStep)
-                        Spacer(Modifier.height(14.dp))
                         SwipeActionsSettings(swipe, viewModel::setSwipeRight, viewModel::setSwipeLeft, viewModel::setSwipeDistance)
-                        Spacer(Modifier.height(14.dp))
+                        ToggleRow(Icons.Rounded.SkipNext, "Autoplay", "Play the next video when one ends", autoplayNext, viewModel::setAutoplayNext)
+                        ToggleRow(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", "Keep watching in a small window when you leave", autoPip, viewModel::setAutoPip)
+                        ToggleRow(Icons.Rounded.Headphones, "Keep audio with screen off", "Saves data; pauses if turned off", backgroundAudio, viewModel::setBackgroundAudio)
+                        ToggleRow(Icons.Rounded.ScreenRotation, "Rotate to fullscreen", "Turn the phone sideways to go fullscreen", rotateToFullscreen, viewModel::setRotateToFullscreen)
+                    }
+                }
+
+                item { SectionTitle("Data and quality") }
+                item {
+                    Card {
+                        QualityRow(Icons.Rounded.Wifi, "Wi-Fi quality", wifiQuality, viewModel::setWifiQuality)
+                        QualityRow(Icons.Rounded.SignalCellularAlt, "Mobile data quality", mobileQuality, viewModel::setMobileQuality)
+                        ToggleRow(Icons.Rounded.DataSaverOn, "Data saver", "On mobile data: small thumbnails, 360p at most", dataSaver, viewModel::setDataSaver)
+                        if (dataSaver) {
+                            ToggleRow(Icons.Rounded.MusicNote, "Start in audio-only", "With data saver on, videos open as audio", dataSaverAudioOnly, viewModel::setDataSaverAudioOnly)
+                        }
+                    }
+                }
+
+                item { SectionTitle("Downloads") }
+                item { Card { DownloadRulesSettings(downloadRules, viewModel::setDownloadRules) } }
+
+                item { SectionTitle("Appearance") }
+                item {
+                    Card {
+                        AppearanceSettings(themeMode, accent, dynamicColor, tintedSurfaces, viewModel::setThemeMode, viewModel::setAccent, viewModel::setDynamicColor, viewModel::setTintedSurfaces)
+                    }
+                }
+
+                item { SectionTitle("More") }
+                item {
+                    Card {
                         ToggleRow(
                             Icons.Rounded.Bedtime, "Bedtime mode",
-                            "Dark, warm screen and quieter videos from ${hhmm(bedtimeStart)} to ${hhmm(bedtimeEnd)}",
+                            "Warm, dim screen and quieter videos ${hhmm(bedtimeStart)} to ${hhmm(bedtimeEnd)}",
                             bedtimeOn, viewModel::setBedtimeOn
                         )
                         AnimatedVisibility(bedtimeOn) {
@@ -148,62 +163,35 @@ fun SettingsScreen(
                                 onStart = viewModel::setBedtimeStart, onEnd = viewModel::setBedtimeEnd, onVolume = viewModel::setBedtimeVolume
                             )
                         }
-                        ToggleRow(Icons.Rounded.SkipNext, "Autoplay", "Play the next video in a playlist when one ends", autoplayNext, viewModel::setAutoplayNext)
-                        Spacer(Modifier.height(14.dp))
-                        ToggleRow(Icons.Rounded.Smartphone, "Shorts tab on channels", "Shorts stay hidden everywhere else; this adds a separate tab on channel pages", showShortsTab, viewModel::setShowShortsTab)
-                        Spacer(Modifier.height(14.dp))
-                        ToggleRow(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", "Keep watching in a floating window when you leave", autoPip, viewModel::setAutoPip)
-                        Spacer(Modifier.height(14.dp))
-                        ToggleRow(Icons.Rounded.Headphones, "Keep audio when screen is off", "Drops the video to save data; pauses if off", backgroundAudio, viewModel::setBackgroundAudio)
-                        Spacer(Modifier.height(14.dp))
-                        ToggleRow(Icons.Rounded.ScreenRotation, "Rotate to fullscreen", "Phones: turning sideways opens fullscreen, turning back exits", rotateToFullscreen, viewModel::setRotateToFullscreen)
-                        Spacer(Modifier.height(14.dp))
+                        ToggleRow(Icons.Rounded.Smartphone, "Shorts tab on channels", "A separate tab on channel pages", showShortsTab, viewModel::setShowShortsTab)
+                        ToggleRow(
+                            Icons.Rounded.WatchLater, "Clean up Watch later",
+                            "Signed in: remove a video from YouTube's Watch later once you've watched it",
+                            autoCleanWatchLater, viewModel::setAutoCleanWatchLater
+                        )
+                        ToggleRow(
+                            Icons.Rounded.Lock, "App lock",
+                            "Ask for your fingerprint or screen lock to open Youtubly (also hides it in recent apps)",
+                            appLockOn
+                        ) { on ->
+                            if (on && !com.youtubly.app.security.AppLock.isAvailable(ctx)) {
+                                android.widget.Toast.makeText(ctx, "Set a screen lock or fingerprint on your phone first", android.widget.Toast.LENGTH_LONG).show()
+                            } else com.youtubly.app.security.AppLockState.setEnabled(ctx, on)
+                        }
                         ToggleRow(
                             Icons.Rounded.VisibilityOff, "Incognito",
-                            "Don't save history, resume points or searches. Turns off when the app restarts",
+                            "Don't save history or searches until the app restarts",
                             incognito, com.youtubly.app.core.Incognito::set
                         )
                     }
                 }
 
-                item { SectionTitle("Data & quality") }
+                item { SectionTitle("About") }
                 item {
-                    Card(Modifier.staggeredEntrance(4)) {
-                        QualityRow(Icons.Rounded.Wifi, "Wi-Fi quality", wifiQuality, viewModel::setWifiQuality)
-                        Spacer(Modifier.height(14.dp))
-                        QualityRow(Icons.Rounded.SignalCellularAlt, "Mobile data quality", mobileQuality, viewModel::setMobileQuality)
-                        Spacer(Modifier.height(14.dp))
-                        ToggleRow(Icons.Rounded.DataSaverOn, "Data saver", "On mobile data: small thumbnails, 360p max, no DeArrow thumbnails", dataSaver, viewModel::setDataSaver)
-                        if (dataSaver) {
-                            Spacer(Modifier.height(14.dp))
-                            ToggleRow(Icons.Rounded.MusicNote, "Start in audio-only", "With data saver on, videos open as audio", dataSaverAudioOnly, viewModel::setDataSaverAudioOnly)
-                        }
-                    }
-                }
-
-                item { SectionTitle("Downloads") }
-                item {
-                    Card(Modifier.staggeredEntrance(4)) {
-                        DownloadRulesSettings(downloadRules, viewModel::setDownloadRules)
-                    }
-                }
-
-                item { SectionTitle("Appearance") }
-                item {
-                    Card(Modifier.staggeredEntrance(5)) {
-                        AppearanceSettings(themeMode, accent, dynamicColor, tintedSurfaces, viewModel::setThemeMode, viewModel::setAccent, viewModel::setDynamicColor, viewModel::setTintedSurfaces)
-                    }
-                }
-
-                item { SectionTitle("System") }
-                item {
-                    Card(Modifier.staggeredEntrance(6)) {
-                        NavRow(Icons.Rounded.SystemUpdate, "App updates", "Version ${com.youtubly.app.BuildConfig.VERSION_NAME} · check GitHub for new builds", { onOpenRoute(Screen.Updates.route) })
-                        Spacer(Modifier.height(14.dp))
+                    Card {
+                        NavRow(Icons.Rounded.SystemUpdate, "App updates", "Version ${com.youtubly.app.BuildConfig.VERSION_NAME}", { onOpenRoute(Screen.Updates.route) })
                         NavRow(Icons.Rounded.Storage, "Storage", "See and clear what the app keeps", { onOpenRoute(Screen.Storage.route) })
-                        Spacer(Modifier.height(14.dp))
-                        NavRow(Icons.Rounded.SettingsBackupRestore, "Backup & restore", "Save your settings to a file (includes blur and music remover)", { onOpenRoute(Screen.Backup.route) })
-                        Spacer(Modifier.height(14.dp))
+                        NavRow(Icons.Rounded.SettingsBackupRestore, "Backup and restore", "Save your settings to a file", { onOpenRoute(Screen.Backup.route) })
                         NavRow(Icons.Rounded.BugReport, "Diagnostics", "Recent errors, copyable for troubleshooting", { onOpenRoute(Screen.Diagnostics.route) })
                     }
                 }

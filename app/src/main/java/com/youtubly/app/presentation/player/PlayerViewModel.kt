@@ -2,6 +2,9 @@ package com.youtubly.app.presentation.player
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
 import com.youtubly.app.core.NetworkPolicy
 import com.youtubly.app.core.readable
 import com.youtubly.app.data.local.datastore.UserPreferences
@@ -57,7 +60,9 @@ sealed interface PlayerUiState {
         /** Data saver was active when this video loaded (mobile data + setting on). */
         val dataSaver: Boolean = false,
         /** A per-channel speed is stored for this video's channel. */
-        val channelSpeedRemembered: Boolean = false
+        val channelSpeedRemembered: Boolean = false,
+        /** A speed is stored for this exact video (beats the channel and global speeds). */
+        val videoSpeedRemembered: Boolean = false
     ) : PlayerUiState {
         val audioOnly: Boolean get() = audioMode
     }
@@ -77,7 +82,9 @@ class PlayerViewModel @Inject constructor(
     private val networkPolicy: NetworkPolicy,
     val playerController: PlayerController,
     private val queuePlayer: com.youtubly.app.playback.QueuePlayer,
-    val sleepTimer: com.youtubly.app.playback.SleepTimer
+    val sleepTimer: com.youtubly.app.playback.SleepTimer,
+    private val notesRepository: com.youtubly.app.data.repository.NotesRepository,
+    private val okHttpClient: okhttp3.OkHttpClient
 ) : ViewModel() {
 
     /** The playlist queue being played, if any (shown as a bar with previous / next). */
@@ -220,7 +227,8 @@ class PlayerViewModel @Inject constructor(
         val start = linkStart ?: if (saved > 10_000 && (durMs <= 0 || saved < durMs - 15_000)) saved else 0L
         // Per-channel speed wins over the global one.
         val channelSpeed = info.video.uploaderUrl?.let { userPreferences.channelSpeeds.first()[it] }
-        var speed = channelSpeed ?: userPreferences.playbackSpeed.first()
+        val videoSpeed = userPreferences.videoSpeeds.first()[id]
+        var speed = com.youtubly.app.domain.playback.pickSpeed(videoSpeed, channelSpeed, userPreferences.playbackSpeed.first())
         // Quality cap / data saver are decided once per video from the network right now, so
         // a Wi-Fi ↔ mobile switch mid-video only affects the next one.
         val policy = networkPolicy.forNewVideo()
@@ -240,6 +248,7 @@ class PlayerViewModel @Inject constructor(
             playerController.setSpeed(speed)
             when {
                 start > 0 -> _events.tryEmit("Resumed at ${formatDuration(start / 1000)}")
+                videoSpeed != null && videoSpeed != 1f -> _events.tryEmit("${formatSpeed(videoSpeed)} speed for this video")
                 channelSpeed != null && channelSpeed != 1f -> _events.tryEmit("${formatSpeed(channelSpeed)} speed for this channel")
             }
         }
@@ -250,7 +259,8 @@ class PlayerViewModel @Inject constructor(
             options = options, speed = speed, heights = playerController.availableHeights(info), signedIn = signedIn,
             audioMode = playerController.isAudioMode,
             dataSaver = if (alreadyPlaying) networkPolicy.dataSaverActive.value else policy.dataSaver,
-            channelSpeedRemembered = channelSpeed != null
+            channelSpeedRemembered = channelSpeed != null,
+            videoSpeedRemembered = videoSpeed != null
         )
         startSavingPosition(id)
 
@@ -363,13 +373,102 @@ class PlayerViewModel @Inject constructor(
         playerController.setSpeed(speed)
         updateSuccess { it.copy(speed = speed) }
         val channelUrl = s?.info?.video?.uploaderUrl
+        val videoId = s?.info?.video?.id
         viewModelScope.launch {
-            // A channel with a remembered speed keeps its own entry up to date; everything
+            // A video or channel with a remembered speed keeps its own entry up to date; everything
             // else changes the global default.
-            if (s?.channelSpeedRemembered == true && channelUrl != null) userPreferences.setChannelSpeed(channelUrl, speed)
+            if (s?.videoSpeedRemembered == true && videoId != null) userPreferences.setVideoSpeed(videoId, speed)
+            else if (s?.channelSpeedRemembered == true && channelUrl != null) userPreferences.setChannelSpeed(channelUrl, speed)
             else userPreferences.setPlaybackSpeed(speed)
         }
     }
+
+    /** Quick speed button: 1x > 1.25x > 1.5x > 1.75x > 2x > 0.75x > 1x. */
+    fun cycleSpeed() {
+        val order = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 0.75f)
+        val cur = success()?.speed ?: 1f
+        val i = order.indexOfFirst { kotlin.math.abs(it - cur) < 0.01f }
+        setSpeed(order[(i + 1).mod(order.size)])
+    }
+
+    fun rememberSpeedForVideo() {
+        val s = success() ?: return
+        updateSuccess { it.copy(videoSpeedRemembered = true) }
+        viewModelScope.launch {
+            userPreferences.setVideoSpeed(s.info.video.id, s.speed)
+            _events.emit("${formatSpeed(s.speed)} remembered for this video")
+        }
+    }
+
+    fun resetVideoSpeed() {
+        val s = success() ?: return
+        viewModelScope.launch {
+            userPreferences.setVideoSpeed(s.info.video.id, null)
+            val channelSpeed = s.info.video.uploaderUrl?.let { userPreferences.channelSpeeds.first()[it] }
+            val back = channelSpeed ?: userPreferences.playbackSpeed.first()
+            playerController.setSpeed(back)
+            updateSuccess { it.copy(videoSpeedRemembered = false, speed = back) }
+            _events.emit("Video speed reset")
+        }
+    }
+
+    // ---------------- transcript + notes ----------------
+    data class TranscriptUi(
+        val loading: Boolean = false,
+        val cues: List<com.youtubly.app.domain.playback.TranscriptCue> = emptyList(),
+        val error: String? = null,
+        val trackLabel: String? = null,
+        val forVideoId: String? = null
+    )
+
+    private val _transcript = MutableStateFlow(TranscriptUi())
+    val transcript: StateFlow<TranscriptUi> = _transcript
+
+    /** Downloads the caption file of [track] (optionally auto-translated) and turns it into transcript lines. */
+    fun loadTranscript(track: CaptionTrack?, translateTo: String? = null) {
+        val s = success() ?: return
+        val chosen = track ?: s.options.caption ?: s.info.captions.firstOrNull()
+        if (chosen == null) { _transcript.value = TranscriptUi(error = "This video has no captions, so there is no transcript.", forVideoId = s.info.video.id); return }
+        val id = s.info.video.id
+        val label = chosen.label + (translateTo?.let { " > $it" } ?: "")
+        _transcript.value = TranscriptUi(loading = true, trackLabel = label, forVideoId = id)
+        viewModelScope.launch {
+            val result = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val url = chosen.url + (translateTo?.let { "&tlang=$it" } ?: "")
+                    okHttpClient.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r ->
+                        if (!r.isSuccessful) error("HTTP ${r.code}")
+                        com.youtubly.app.domain.playback.Transcript.parseVtt(r.body.string())
+                    }
+                }
+            }
+            _transcript.value = result.fold(
+                onSuccess = { cues ->
+                    if (cues.isEmpty()) TranscriptUi(error = "The captions are empty.", trackLabel = label, forVideoId = id)
+                    else TranscriptUi(cues = cues, trackLabel = label, forVideoId = id)
+                },
+                onFailure = { TranscriptUi(error = "Could not load the transcript: ${it.message ?: "network error"}", trackLabel = label, forVideoId = id) }
+            )
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val notes: StateFlow<List<com.youtubly.app.data.local.entity.VideoNoteEntity>> = _uiState
+        .map { (it as? PlayerUiState.Success)?.info?.video?.id }
+        .distinctUntilChanged()
+        .flatMapLatest { id -> if (id == null) kotlinx.coroutines.flow.flowOf(emptyList()) else notesRepository.notesFor(id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addNote(text: String) {
+        val s = success() ?: return
+        val at = playerController.player.currentPosition
+        viewModelScope.launch { notesRepository.add(s.info.video, at, text) }
+    }
+    fun editNote(id: Long, text: String) { viewModelScope.launch { notesRepository.edit(id, text) } }
+    fun deleteNote(id: Long) { viewModelScope.launch { notesRepository.delete(id) } }
+
+    fun seekToMs(ms: Long) { playerController.player.seekTo(ms.coerceAtLeast(0)) }
+    fun currentPositionMs(): Long = playerController.player.currentPosition
 
     fun rememberSpeedForChannel() {
         val s = success() ?: return

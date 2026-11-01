@@ -56,6 +56,7 @@ import com.youtubly.app.presentation.components.shimmer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -68,8 +69,20 @@ sealed interface ShareState {
 @HiltViewModel
 class ShareIntakeViewModel @Inject constructor(
     private val getStreamInfo: GetStreamInfoUseCase,
-    val playerController: PlayerController
+    val playerController: PlayerController,
+    private val playlistRepository: com.youtubly.app.data.repository.PlaylistRepository,
+    userPreferences: com.youtubly.app.data.local.datastore.UserPreferences
 ) : ViewModel() {
+    /** The playlist you saved to last (not a finished one), for the one-tap save. */
+    val lastPlaylist: StateFlow<com.youtubly.app.data.local.entity.PlaylistSummary?> =
+        kotlinx.coroutines.flow.combine(userPreferences.lastPlaylistId, playlistRepository.playlists) { id, lists ->
+            lists.firstOrNull { it.id == id && !it.isFinished }
+        }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), null)
+
+    fun saveTo(playlistId: Long, video: com.youtubly.app.domain.model.Video) {
+        viewModelScope.launch { playlistRepository.add(playlistId, video) }
+    }
+
     private val _state = MutableStateFlow<ShareState>(ShareState.Loading)
     val state: StateFlow<ShareState> = _state
     private var loadedUrl: String? = null
@@ -151,7 +164,15 @@ fun ShareIntakeSheet(url: String, onPlay: () -> Unit, onDismiss: () -> Unit, vie
                 else onPlay() // nothing playing: just start it
                 onDismiss()
             }
-            ShareAction(Icons.Rounded.PlaylistAdd, "Save to playlist", enabled = ready != null) { saveSheet = true }
+            val last by viewModel.lastPlaylist.collectAsStateWithLifecycle()
+            last?.let { pl ->
+                ShareAction(Icons.Rounded.PlaylistAdd, "Save to \"${pl.name}\"", enabled = ready != null) {
+                    viewModel.saveTo(pl.id, ready!!.info.video)
+                    toast("Saved to ${pl.name}")
+                    onDismiss()
+                }
+            }
+            ShareAction(Icons.Rounded.PlaylistAdd, if (last != null) "Save to another playlist..." else "Save to playlist", enabled = ready != null) { saveSheet = true }
             ShareAction(Icons.Rounded.Download, "Download", enabled = ready != null && actions != null) { downloadSheet = true }
         }
     }

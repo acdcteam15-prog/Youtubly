@@ -169,8 +169,11 @@ class MainActivity : ComponentActivity() {
                             }
                     ) {
                         com.youtubly.app.presentation.blur.ModelSetupGate {
-                            YoutublyNavHost(playerController, pendingLink, onLinkHandled = { pendingLink.value = null })
+                            com.youtubly.app.security.AppLockGate {
+                                YoutublyNavHost(playerController, pendingLink, onLinkHandled = { pendingLink.value = null })
+                            }
                         }
+                        com.youtubly.app.security.SafeModeDialog()
                     }
                 }
             }
@@ -227,6 +230,10 @@ class MainActivity : ComponentActivity() {
         if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "youtubly") {
             when (intent.data?.host) {
                 "search" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Search.route)
+                "playlist" -> intent.data?.lastPathSegment?.toLongOrNull()?.let {
+                    pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.PlaylistDetail.createRoute(it))
+                }
+                "playlists" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Playlists.route)
                 "updates" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Updates.route)
                 "downloads" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.Downloads.route)
                 "audio" -> pendingLink.value = com.youtubly.app.core.DeepLink.Open(com.youtubly.app.presentation.navigation.Screen.AudioLibrary.route)

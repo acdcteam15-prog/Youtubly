@@ -17,6 +17,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -36,11 +37,14 @@ data class AccountData(
 class LibraryViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val accountRepository: AccountRepository,
-    videoRepository: VideoRepository,
+    private val videoRepository: VideoRepository,
     private val userPreferences: UserPreferences,
     private val subscriptionCache: com.youtubly.app.data.local.dao.SubscriptionCacheDao,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context
 ) : ViewModel() {
+
+    /** Watch-later ids already removed on YouTube (declared before `init`, which starts the cleanup job). */
+    private val cleaned = HashSet<String>()
 
     val authState: StateFlow<AuthState> = authRepository.observeAuthState()
         .stateIn(viewModelScope, SharingStarted.Eagerly, AuthState.SignedOut)
@@ -87,6 +91,31 @@ class LibraryViewModel @Inject constructor(
 
     val showShortsTab: StateFlow<Boolean> = userPreferences.showShortsTab
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    // ---- Watch later cleanup ----
+    val autoCleanWatchLater: StateFlow<Boolean> = userPreferences.autoCleanWatchLater
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    fun setAutoCleanWatchLater(v: Boolean) { viewModelScope.launch { userPreferences.setAutoCleanWatchLater(v) } }
+
+    // ---- Updates: pre-download on Wi-Fi ----
+    val autoDownloadUpdates: StateFlow<Boolean> = userPreferences.autoDownloadUpdates
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    fun setAutoDownloadUpdates(v: Boolean) { viewModelScope.launch { userPreferences.setAutoDownloadUpdates(v) } }
+
+    /** Signed in + switch on: a Watch later video that is 90 % watched is removed from YouTube's list (and from this screen). */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun startWatchLaterCleanup() {
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(_account, userPreferences.autoCleanWatchLater, videoRepository.observeProgress()) { acc, on, progress ->
+                if (!on) emptyList() else acc.watchLater.filter { (progress[it.id] ?: 0f) >= 0.9f && it.id !in cleaned }
+            }.debounce(2000).collect { done ->
+                if (done.isEmpty()) return@collect
+                val removed = done.filter { v -> accountRepository.setWatchLater(v.id, false).isSuccess }.map { it.id }.toSet()
+                cleaned += removed
+                if (removed.isNotEmpty()) _account.value = _account.value.copy(watchLater = _account.value.watchLater.filterNot { it.id in removed })
+            }
+        }
+    }
+
     fun setShowShortsTab(v: Boolean) { viewModelScope.launch { userPreferences.setShowShortsTab(v) } }
 
     val backgroundAudio: StateFlow<Boolean> = userPreferences.backgroundAudio
@@ -107,6 +136,7 @@ class LibraryViewModel @Inject constructor(
     val account: StateFlow<AccountData> = _account
 
     init {
+        startWatchLaterCleanup()
         viewModelScope.launch {
             authRepository.observeAuthState().map { it is AuthState.SignedIn }.distinctUntilChanged().collect { signedIn ->
                 if (signedIn) loadAccount() else {

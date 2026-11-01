@@ -87,6 +87,9 @@ abstract class PlaylistDao {
     @Query("SELECT COUNT(*) FROM playlist_items WHERE playlistId = :id")
     protected abstract suspend fun countItems(id: Long): Int
 
+    @Query("SELECT * FROM playlist_items")
+    abstract suspend fun allItems(): List<PlaylistItemEntity>
+
     @Insert
     abstract suspend fun insertPlaylist(p: PlaylistEntity): Long
 

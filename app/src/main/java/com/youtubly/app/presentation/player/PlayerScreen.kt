@@ -68,6 +68,8 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.DataSaverOn
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -452,6 +454,8 @@ private fun PlayerDetails(
     }
     var saveSheet by remember(video.id) { mutableStateOf(false) }
     if (saveSheet) com.youtubly.app.presentation.components.SaveToPlaylistSheet(video, onDismiss = { saveSheet = false })
+    var studySheet by remember(video.id) { mutableStateOf(false) }
+    if (studySheet) StudySheet(s, viewModel, onDismiss = { studySheet = false })
     val playlistRepo = com.youtubly.app.presentation.components.LocalPlaylists.current
     val inPlaylists by remember(video.id, playlistRepo) {
         playlistRepo?.playlistsContaining(video.id) ?: kotlinx.coroutines.flow.flowOf(emptySet())
@@ -585,6 +589,15 @@ private fun PlayerDetails(
                         onClick = viewModel::toggleAudioOnly
                     )
                 }
+                item {
+                    ActionPill(
+                        icon = Icons.Rounded.Speed,
+                        label = formatSpeed(s.speed),
+                        highlighted = s.speed != 1f,
+                        onClick = viewModel::cycleSpeed
+                    )
+                }
+                item { ActionPill(Icons.Rounded.EditNote, "Notes and transcript", onClick = { studySheet = true }) }
                 item { ActionPill(Icons.Rounded.Download, "Download", onClick = { showDownload = true }) }
                 item { SharePill(video.url, branding?.title ?: video.title, video.duration.toInt(), viewModel.playerController) }
             }
@@ -766,6 +779,11 @@ private fun PlaybackSettingsSheet(s: PlayerUiState.Success, viewModel: PlayerVie
                 }
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingChip(
+                    if (s.videoSpeedRemembered) "Remembered for this video" else "Remember for this video",
+                    s.videoSpeedRemembered
+                ) { viewModel.rememberSpeedForVideo() }
+                if (s.videoSpeedRemembered) SettingChip("Reset video", false) { viewModel.resetVideoSpeed() }
                 SettingChip(
                     if (s.channelSpeedRemembered) "Remembered for this channel" else "Remember for this channel",
                     s.channelSpeedRemembered

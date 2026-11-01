@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun UpdateBanner(onOpen: () -> Unit, vm: UpdateBannerViewModel = hiltViewModel()) {
     val info by vm.available.collectAsStateWithLifecycle()
+    val ready by vm.ready.collectAsStateWithLifecycle()
     val release = info ?: return
     Surface(
         color = MaterialTheme.colorScheme.primaryContainer,
@@ -37,11 +38,11 @@ fun UpdateBanner(onOpen: () -> Unit, vm: UpdateBannerViewModel = hiltViewModel()
             Spacer(Modifier.width(12.dp))
             Column {
                 Text(
-                    "Update available: ${release.versionName} (build ${release.build})",
+                    (if (ready) "Update ready: ${release.versionName} (build ${release.build})" else "Update available: ${release.versionName} (build ${release.build})"),
                     style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
-                    if (release.required) "This update is required. Tap to install." else "Tap to see what is new and update.",
+                    if (ready) "Downloaded. Tap to install it now." else if (release.required) "This update is required. Tap to install." else "Tap to see what is new and update.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }

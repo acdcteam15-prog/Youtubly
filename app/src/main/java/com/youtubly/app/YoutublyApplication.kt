@@ -14,6 +14,7 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import com.youtubly.app.core.Constants
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import javax.inject.Inject
@@ -26,6 +27,8 @@ class YoutublyApplication : Application(), Configuration.Provider, SingletonImag
     @Inject @Named("images") lateinit var imageOkHttpClient: OkHttpClient
     @Inject lateinit var editRepository: com.youtubly.app.data.repository.EditRepository
     @Inject lateinit var playlistAutoFinisher: com.youtubly.app.data.repository.PlaylistAutoFinisher
+    @Inject lateinit var blurStore: com.youtubly.app.blur.BlurPreferencesStore
+    @Inject lateinit var musicStore: com.youtubly.app.music.MusicPreferencesStore
 
     override fun onCreate() {
         super.onCreate()
@@ -42,6 +45,20 @@ class YoutublyApplication : Application(), Configuration.Provider, SingletonImag
         )
         // Videos watched in auto-remove playlists leave them (and finished playlists move to the shelf).
         playlistAutoFinisher.start()
+        com.youtubly.app.security.AppLockState.init(this)
+        // Crash loop (two crashes soon after starting): switch the risky features off so the app opens again.
+        if (com.youtubly.app.security.CrashGuard.install(this)) {
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+                val blurOn = runCatching { blurStore.settings.first().enabled }.getOrDefault(false)
+                val musicOn = runCatching { musicStore.settings.first().enabled }.getOrDefault(false)
+                com.youtubly.app.security.CrashGuard.remember(this@YoutublyApplication, blurOn, musicOn)
+                runCatching { blurStore.setEnabled(false); musicStore.setEnabled(false) }
+                com.youtubly.app.playback.GpuEffects.suspendFor(this@YoutublyApplication, 24 * 3600_000L)
+            }
+        }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+            { com.youtubly.app.security.CrashGuard.markStable(this) }, com.youtubly.app.security.CrashGuard.stableAfterMs()
+        )
         // Twice a day: look for a new build on GitHub and notify once per build.
         com.youtubly.app.update.UpdateCheckWorker.schedule(this)
         // Exports queued before a force-stop / reboot continue on the next launch.

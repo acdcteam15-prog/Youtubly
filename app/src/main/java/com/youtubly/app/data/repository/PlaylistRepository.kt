@@ -18,8 +18,10 @@ import javax.inject.Singleton
 class PlaylistRepository @Inject constructor(
     private val dao: PlaylistDao,
     private val watchHistoryDao: WatchHistoryDao,
-    private val downloadDao: DownloadDao
+    private val downloadDao: DownloadDao,
+    private val prefs: com.youtubly.app.data.local.datastore.UserPreferences
 ) {
+    private var lastRemembered = 0L
 
     val playlists: Flow<List<PlaylistSummary>> = dao.observeSummaries()
 
@@ -82,7 +84,13 @@ class PlaylistRepository @Inject constructor(
 
     suspend fun rename(id: Long, name: String) = dao.rename(id, name.trim().ifBlank { "Untitled playlist" }, System.currentTimeMillis())
     suspend fun delete(id: Long) = dao.deletePlaylist(id)
-    suspend fun add(playlistId: Long, video: Video) = dao.append(video.toItem(playlistId), System.currentTimeMillis())
+    suspend fun add(playlistId: Long, video: Video) {
+        dao.append(video.toItem(playlistId), System.currentTimeMillis())
+        if (lastRemembered != playlistId) {
+            lastRemembered = playlistId
+            runCatching { prefs.setLastPlaylistId(playlistId) }
+        }
+    }
     suspend fun remove(playlistId: Long, videoId: String) = dao.remove(playlistId, videoId, System.currentTimeMillis())
     suspend fun reorder(playlistId: Long, orderedVideoIds: List<String>) =
         dao.reorder(playlistId, orderedVideoIds, System.currentTimeMillis())

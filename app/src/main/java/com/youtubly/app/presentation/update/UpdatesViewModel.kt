@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -25,6 +26,8 @@ class UpdatesViewModel @Inject constructor(
     val state: StateFlow<UpdateState> = repository.state
     val autoCheck: StateFlow<Boolean> = prefs.autoUpdateCheck.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
     val token: StateFlow<String> = prefs.githubToken.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+    val autoDownload: StateFlow<Boolean> = prefs.autoDownloadUpdates.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    fun setAutoDownload(v: Boolean) { viewModelScope.launch { prefs.setAutoDownloadUpdates(v) } }
     val skippedBuild: StateFlow<Int> = prefs.skippedBuild.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val repo: String get() = repository.repo
@@ -36,6 +39,8 @@ class UpdatesViewModel @Inject constructor(
     fun canInstall(): Boolean = repository.canInstall()
     fun allowInstallIntent() = repository.allowInstallIntent()
     fun installIntent(file: File) = repository.installIntent(file)
+    fun install(file: File) = repository.install(file)
+    fun restoreReady() = repository.restoreReady()
     fun reset() = repository.reset()
 
     fun skip(info: ReleaseInfo) { viewModelScope.launch { prefs.setSkippedBuild(info.build); repository.reset() } }
@@ -52,12 +57,18 @@ class UpdateBannerViewModel @Inject constructor(
 
     /** The release to advertise, or null (nothing new / skipped / not checked yet). */
     val available: StateFlow<ReleaseInfo?> = combine(repository.state, prefs.skippedBuild) { s, skipped ->
-        (s as? UpdateState.Available)?.info?.takeIf { it.build != skipped }
+        val info = (s as? UpdateState.Available)?.info ?: (s as? UpdateState.Ready)?.info
+        info?.takeIf { it.build != skipped }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** The new build is already downloaded: one tap installs it. */
+    val ready: StateFlow<Boolean> = repository.state.map { it is UpdateState.Ready }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     init {
         viewModelScope.launch {
             repository.announceIfJustUpdated()
+            repository.restoreReady()
             val due = System.currentTimeMillis() - prefs.lastUpdateCheck.first() > 6 * 3600_000L
             if (prefs.autoUpdateCheck.first() && due && repository.state.value is UpdateState.Idle) repository.check()
         }

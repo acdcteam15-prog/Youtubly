@@ -18,6 +18,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,6 +66,7 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DataSaverOn
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.Headphones
@@ -94,6 +97,7 @@ import coil3.compose.AsyncImage
 import com.youtubly.app.domain.model.AuthState
 import com.youtubly.app.domain.model.Video
 import com.youtubly.app.presentation.components.AuroraBackground
+import com.youtubly.app.presentation.components.PlainBackground
 import com.youtubly.app.presentation.components.GradientTitle
 import com.youtubly.app.presentation.components.LocalWatchProgress
 import com.youtubly.app.presentation.components.bounceClick
@@ -144,7 +148,7 @@ fun LibraryScreen(
     val account by viewModel.account.collectAsStateWithLifecycle()
     val signedIn = auth is AuthState.SignedIn
 
-    AuroraBackground {
+    PlainBackground {
         // Pull to refresh the account data (Watch later, playlists, profile). Only when signed
         // in — local history reads straight from Room and is already live.
         com.youtubly.app.presentation.components.Refreshable(
@@ -156,114 +160,89 @@ fun LibraryScreen(
             Modifier.fillMaxSize().statusBarsPadding(),
             contentPadding = PaddingValues(bottom = 120.dp + com.youtubly.app.presentation.components.miniBarClearance())
         ) {
-            item { GradientTitle("You", modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) }
-
-            // ---- Settings (everything lives on its own page now) ----
+            // ---- Title + settings gear ----
             item {
-                Card(Modifier.staggeredEntrance(0)) {
-                    NavRow(Icons.Rounded.Settings, "Settings", "Blur, music remover, SponsorBlock, playback, appearance…", onOpenSettings)
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("You", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Rounded.Settings, "Settings") }
                 }
             }
 
-            // ---- Account card ----
+            // ---- Account: one plain row ----
             item {
-                Card(Modifier.staggeredEntrance(0)) {
-                    AnimatedContent(
-                        targetState = Triple(signedIn, account.profile, account.loading),
-                        transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(150)) },
-                        label = "auth"
-                    ) { (isIn, profile, loading) ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier
-                                    .size(60.dp)
-                                    .clip(CircleShape)
-                                    .background(BrandGradient)
-                                    .padding(2.dp)
-                                    .clip(CircleShape)
-                                    .then(if (loading) Modifier.shimmer() else Modifier),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (profile?.avatarUrl != null) {
-                                    coil3.compose.AsyncImage(profile.avatarUrl, profile.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                } else {
-                                    Icon(Icons.Rounded.AccountCircle, null, tint = Color.White, modifier = Modifier.size(34.dp))
-                                }
-                            }
-                            Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    when {
-                                        !isIn -> "Guest mode"
-                                        profile != null -> profile.name
-                                        loading -> "Loading account…"
-                                        else -> "Signed in"
-                                    },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    when {
-                                        !isIn -> "Sign in to get your own YouTube Home"
-                                        profile != null -> listOfNotNull(
-                                            profile.handle,
-                                            profile.subscriberCount?.let { "${formatCount(it)} subscribers" }
-                                        ).joinToString("  ·  ").ifBlank { "YouTube account" }
-                                        else -> "Your Home feed is personalised"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            if (isIn) {
-                                IconButton(onClick = viewModel::loadAccount) { Icon(Icons.Rounded.Refresh, "Refresh") }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    if (signedIn) {
-                        OutlinedButton(onClick = viewModel::signOut, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Rounded.Logout, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Sign out")
-                        }
-                    } else {
-                        Button(
-                            onClick = onSignIn,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                        ) { Text("Sign in to YouTube") }
-                    }
-                    androidx.compose.animation.AnimatedVisibility(
-                        account.error != null,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut()
+                val profile = account.profile
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .then(if (account.loading) Modifier.shimmer() else Modifier),
+                        contentAlignment = Alignment.Center
                     ) {
+                        if (profile?.avatarUrl != null) {
+                            coil3.compose.AsyncImage(profile.avatarUrl, profile.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Icon(Icons.Rounded.AccountCircle, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(30.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            account.error.orEmpty(),
-                            color = MaterialTheme.colorScheme.error,
+                            when {
+                                !signedIn -> "Not signed in"
+                                profile != null -> profile.name
+                                account.loading -> "Loading…"
+                                else -> "Signed in"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            when {
+                                !signedIn -> "Sign in for your own Home feed"
+                                profile != null -> profile.handle ?: "YouTube account"
+                                else -> ""
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 10.dp)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
+                    if (signedIn) {
+                        androidx.compose.material3.TextButton(onClick = viewModel::signOut) { Text("Sign out") }
+                    } else {
+                        Button(onClick = onSignIn) { Text("Sign in") }
+                    }
+                }
+                androidx.compose.animation.AnimatedVisibility(account.error != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    Text(
+                        account.error.orEmpty(),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
                 }
             }
 
+            // ---- Your stuff (Playlists is a tab now) ----
             item {
-                Card(Modifier.staggeredEntrance(1)) {
-                    NavRow(Icons.Rounded.PlaylistPlay, "Playlists", "Your local playlists — play, shuffle, reorder", onOpenPlaylists)
-                    Spacer(Modifier.height(10.dp))
-                    NavRow(Icons.Rounded.History, "History", "Search, remove or pause your watch history", onOpenHistory)
-                    Spacer(Modifier.height(10.dp))
-                    NavRow(Icons.Rounded.VisibilityOff, "Hidden videos & channels", "Undo \"Not interested\" and \"Don't recommend\"", onOpenHidden)
+                Card {
+                    NavRow(Icons.Rounded.History, "History", "Search or clear what you watched", onOpenHistory)
+                    NavRow(Icons.Rounded.VisibilityOff, "Hidden videos & channels", "Undo \"Not interested\"", onOpenHidden)
+                    NavRow(Icons.Rounded.Folder, "Channel groups", "Lectures, news... one feed per group", { onOpenRoute(Screen.ChannelGroups.route) })
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
-                        Spacer(Modifier.height(10.dp))
-                        NavRow(Icons.Rounded.Link, "Open YouTube links in Youtubly", "Tap → \"Add link\" and tick youtube.com / youtu.be") {
+                        NavRow(Icons.Rounded.Link, "Open YouTube links here", "Android asks once: Add link, tick youtube.com") {
                             // Android 12+ only opens unverified web links in an app once the user allows them here.
                             runCatching {
                                 ctx.startActivity(
@@ -379,13 +358,19 @@ private fun VideoRow(videos: List<Video>, onVideoClick: (Video) -> Unit) {
 
 @Composable
 internal fun ToggleRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.secondary)
-        Spacer(Modifier.width(14.dp))
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.medium).clickable { onChange(!checked) }.padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            if (subtitle.isNotBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
+        Spacer(Modifier.width(12.dp))
         Switch(
             checked = checked,
             onCheckedChange = onChange,
@@ -690,37 +675,34 @@ internal fun QualityRow(icon: ImageVector, title: String, selected: Int, onSelec
 @Composable
 internal fun NavRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).bounceClick(scaleDown = 0.98f, onClick = onClick).padding(vertical = 4.dp),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.secondary)
-        Spacer(Modifier.width(14.dp))
+        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            if (subtitle.isNotBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
-        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
     }
 }
 
+/** A small coloured label above a group of rows. */
 @Composable
 internal fun SectionTitle(text: String) {
     Text(
         text,
-        style = MaterialTheme.typography.titleLarge,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.padding(start = 20.dp, top = 18.dp, bottom = 10.dp)
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 4.dp)
     )
 }
 
+/** A group of rows: no box, no fill - just the page's own side margins. */
 @Composable
 internal fun Card(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Column(
-        modifier
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.large)
-            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f))
-            .padding(16.dp)
-    ) { content() }
+    Column(modifier.padding(horizontal = 20.dp).fillMaxWidth()) { content() }
 }

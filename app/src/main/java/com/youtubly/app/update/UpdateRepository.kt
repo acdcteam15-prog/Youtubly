@@ -1,7 +1,10 @@
 package com.youtubly.app.update
 
 import android.content.Context
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageInstaller
+import android.os.Build
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -72,7 +75,14 @@ class UpdateRepository @Inject constructor(
         prefs.setLastUpdateCheck(System.currentTimeMillis())
         val state = result.fold(
             onSuccess = { info ->
-                if (info != null && UpdateParser.isNewer(info.build, currentBuild)) UpdateState.Available(info)
+                if (info != null && UpdateParser.isNewer(info.build, currentBuild)) {
+                    val waiting = apkFile.takeIf { it.exists() && it.length() > 0 }
+                    val sameBuild = waiting?.let {
+                        runCatching { context.packageManager.getPackageArchiveInfo(it.absolutePath, 0) }.getOrNull()
+                            ?.takeIf { a -> a.packageName == context.packageName && a.longVersionCode == info.build.toLong() }
+                    }
+                    if (waiting != null && sameBuild != null) UpdateState.Ready(info, waiting) else UpdateState.Available(info)
+                }
                 else UpdateState.UpToDate(currentVersion, currentBuild)
             },
             onFailure = { UpdateState.Failed(it.message ?: "Could not check for updates") }
@@ -167,6 +177,50 @@ class UpdateRepository @Inject constructor(
                 if (r.isSuccessful) UpdateParser.parseSha256(r.body.string()) else null
             }
         }.getOrNull()
+    }
+
+    /**
+     * Installs [file] through Android's PackageInstaller. After the first manual install Android 12+ lets an app that
+     * installed itself update itself without another prompt; otherwise the system shows its usual "Update" dialog
+     * (the receiver opens it). Falls back to the classic install intent if a session cannot be created.
+     */
+    fun install(file: File) {
+        UpdateInstallResult.failure.value = null
+        val started = runCatching {
+            val installer = context.packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+                setAppPackageName(context.packageName)
+                if (Build.VERSION.SDK_INT >= 31) setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            }
+            val id = installer.createSession(params)
+            installer.openSession(id).use { session ->
+                file.inputStream().use { input ->
+                    session.openWrite("youtubly.apk", 0, file.length()).use { out ->
+                        input.copyTo(out)
+                        session.fsync(out)
+                    }
+                }
+                val callback = Intent(context, UpdateInstallReceiver::class.java).setAction(UpdateInstallReceiver.ACTION)
+                val pending = PendingIntent.getBroadcast(context, id, callback, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                session.commit(pending.intentSender)
+            }
+        }.isSuccess
+        if (!started) context.startActivity(installIntent(file))
+    }
+
+    /** A finished download from an earlier run (the app was closed since): show it as ready to install. */
+    fun restoreReady() {
+        if (_state.value !is UpdateState.Idle && _state.value !is UpdateState.UpToDate) return
+        val file = apkFile.takeIf { it.exists() && it.length() > 0 } ?: return
+        val archive = runCatching { context.packageManager.getPackageArchiveInfo(file.absolutePath, 0) }.getOrNull() ?: return
+        if (archive.packageName != context.packageName || archive.longVersionCode <= currentBuild) return
+        _state.value = UpdateState.Ready(
+            ReleaseInfo(
+                versionName = archive.versionName ?: "", build = archive.longVersionCode.toInt(), notes = "", required = false,
+                apkUrl = "", apkApiUrl = null, sizeBytes = file.length(), sha256Url = null, sha256ApiUrl = null, publishedAt = null
+            ),
+            file
+        )
     }
 
     /** Android asks the user once to allow installs from an app ("Allow installing from Youtubly"). */

@@ -206,11 +206,19 @@ fun PlaylistDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     item(key = HEADER_KEY) {
+                        // Continue: the video you stopped in the middle of; else the first one not finished (only once you've started the list).
+                        val progress = com.youtubly.app.presentation.components.LocalWatchProgress.current.value
+                        val started = order.any { (progress[it.id] ?: 0f) > 0.02f }
+                        val continueFrom = if (!started) null
+                        else order.firstOrNull { (progress[it.id] ?: 0f) in 0.02f..0.9f }
+                            ?: order.firstOrNull { (progress[it.id] ?: 0f) < 0.9f }
                         Header(
                             name = playlist?.name.orEmpty(),
                             videos = order.ifEmpty { finished },
                             onPlayAll = { viewModel.startQueue(shuffle = false)?.let(onPlay) },
-                            onShuffle = { viewModel.startQueue(shuffle = true)?.let(onPlay) }
+                            onShuffle = { viewModel.startQueue(shuffle = true)?.let(onPlay) },
+                            continueTitle = continueFrom?.title,
+                            onContinue = { continueFrom?.let { v -> viewModel.startQueue(shuffle = false, startAt = v)?.let(onPlay) } }
                         )
                     }
                     if (order.isEmpty()) {
@@ -306,7 +314,7 @@ fun PlaylistDetailScreen(
 }
 
 @Composable
-private fun Header(name: String, videos: List<Video>, onPlayAll: () -> Unit, onShuffle: () -> Unit) {
+private fun Header(name: String, videos: List<Video>, onPlayAll: () -> Unit, onShuffle: () -> Unit, continueTitle: String? = null, onContinue: () -> Unit = {}) {
     val cover = videos.firstOrNull()?.thumbnailUrl
     val totalSec = videos.sumOf { it.duration.coerceAtLeast(0) }
     Column(Modifier.padding(bottom = 8.dp)) {
@@ -329,6 +337,13 @@ private fun Header(name: String, videos: List<Video>, onPlayAll: () -> Unit, onS
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
+        if (continueTitle != null) {
+            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(6.dp))
+                Text("Continue: $continueTitle", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = onPlayAll,

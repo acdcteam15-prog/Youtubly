@@ -1,6 +1,9 @@
 package com.youtubly.app.presentation.search
 
+import com.youtubly.app.core.SearchText
 import com.youtubly.app.data.local.dao.PlaylistDao
+import com.youtubly.app.data.local.entity.VideoNoteEntity
+import com.youtubly.app.data.repository.NotesRepository
 import com.youtubly.app.data.local.dao.SubscriptionCacheDao
 import com.youtubly.app.domain.model.DownloadItem
 import com.youtubly.app.domain.model.DownloadStatus
@@ -30,11 +33,12 @@ data class LibraryResults(
     val playlists: List<PlaylistNameHit> = emptyList(),
     val history: List<Video> = emptyList(),
     val saved: List<PlaylistHit> = emptyList(),
-    val downloads: List<DownloadItem> = emptyList()
+    val downloads: List<DownloadItem> = emptyList(),
+    val notes: List<VideoNoteEntity> = emptyList()
 ) {
     val isEmpty: Boolean
-        get() = channels.isEmpty() && playlists.isEmpty() && history.isEmpty() && saved.isEmpty() && downloads.isEmpty()
-    val count: Int get() = channels.size + playlists.size + history.size + saved.size + downloads.size
+        get() = channels.isEmpty() && playlists.isEmpty() && history.isEmpty() && saved.isEmpty() && downloads.isEmpty() && notes.isEmpty()
+    val count: Int get() = channels.size + playlists.size + history.size + saved.size + downloads.size + notes.size
 }
 
 /**
@@ -45,7 +49,8 @@ class LibrarySearch @Inject constructor(
     private val videoRepository: VideoRepository,
     private val downloadRepository: DownloadRepository,
     private val playlistDao: PlaylistDao,
-    private val subscriptionCache: SubscriptionCacheDao
+    private val subscriptionCache: SubscriptionCacheDao,
+    private val notesRepository: NotesRepository
 ) {
     suspend fun search(raw: String, perSource: Int = 5): LibraryResults = coroutineScope {
         val q = raw.trim()
@@ -53,18 +58,18 @@ class LibrarySearch @Inject constructor(
 
         val channels = async {
             runCatching { subscriptionCache.getAll() }.getOrDefault(emptyList())
-                .filter { it.channelName.contains(q, ignoreCase = true) }
-                // Names that start with the query first, then alphabetical.
-                .sortedWith(compareBy({ !it.channelName.startsWith(q, ignoreCase = true) }, { it.channelName.lowercase() }))
+                .filter { SearchText.matches(it.channelName, q) }
+                // Names that start with the query first, then alphabetical (Arabic spelling variants count as equal).
+                .sortedWith(compareBy({ !SearchText.normalize(it.channelName).startsWith(SearchText.normalize(q)) }, { it.channelName.lowercase() }))
                 .take(perSource)
                 .map { ChannelHit(it.channelId, it.channelName) }
         }
         val playlists = async {
-            playlistDao.searchPlaylists(q, perSource).map { PlaylistNameHit(it.id, it.name) }
+            playlistDao.allPlaylists().filter { SearchText.matches(it.name, q) }.take(perSource).map { PlaylistNameHit(it.id, it.name) }
         }
         val saved = async {
             val names = playlistDao.allPlaylists().associate { it.id to it.name }
-            playlistDao.searchItems(q, perSource * 3)
+            playlistDao.allItems().filter { SearchText.matches(it.title, q) || SearchText.matches(it.uploaderName, q) }
                 .distinctBy { it.videoId }          // same video in several playlists → once
                 .take(perSource)
                 .map { item ->
@@ -79,13 +84,19 @@ class LibrarySearch @Inject constructor(
                     )
                 }
         }
-        val history = async { videoRepository.observeHistoryEntries(q).first().take(perSource).map { it.video } }
+        val history = async {
+            videoRepository.observeHistoryEntries("").first()
+                .map { it.video }
+                .filter { SearchText.matches(it.title, q) || SearchText.matches(it.uploaderName, q) }
+                .take(perSource)
+        }
         val downloads = async {
             downloadRepository.observeDownloads().first()
-                .filter { it.status == DownloadStatus.COMPLETED && it.title.contains(q, ignoreCase = true) }
+                .filter { it.status == DownloadStatus.COMPLETED && SearchText.matches(it.title, q) }
                 .take(perSource)
         }
 
+        val notes = async { NotesRepository.filter(notesRepository.allNotes().first(), q).take(perSource) }
         val savedHits = saved.await()
         val savedIds = savedHits.mapTo(HashSet()) { it.video.id }
         LibraryResults(
@@ -95,7 +106,8 @@ class LibrarySearch @Inject constructor(
             // A video that's both watched and saved shows once, under "Saved".
             history = history.await().filterNot { it.id in savedIds },
             saved = savedHits,
-            downloads = downloads.await()
+            downloads = downloads.await(),
+            notes = notes.await()
         )
     }
 }

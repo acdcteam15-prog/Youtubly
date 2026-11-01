@@ -39,10 +39,16 @@ class UpdateCheckWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         if (!prefs.autoUpdateCheck.first()) return Result.success()
         val state = repository.check()
-        if (state is UpdateState.Available) {
-            val build = state.info.build
+        val info = (state as? UpdateState.Available)?.info ?: (state as? UpdateState.Ready)?.info
+        if (info != null) {
+            val build = info.build
+            // Wi-Fi only: fetch the new build now so installing it later is one tap.
+            var ready = state is UpdateState.Ready
+            if (!ready && prefs.autoDownloadUpdates.first() && repository.canInstall() && !isMetered()) {
+                ready = repository.download(info) is UpdateState.Ready
+            }
             if (build != prefs.skippedBuild.first() && build != prefs.notifiedBuild.first()) {
-                notify(state.info)
+                notify(info, ready)
                 prefs.setNotifiedBuild(build)
             }
         }
@@ -50,7 +56,10 @@ class UpdateCheckWorker @AssistedInject constructor(
         return Result.success()
     }
 
-    private fun notify(info: ReleaseInfo) {
+    private fun isMetered(): Boolean =
+        appContext.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered != false
+
+    private fun notify(info: ReleaseInfo, ready: Boolean) {
         val granted = android.os.Build.VERSION.SDK_INT < 33 ||
             ContextCompat.checkSelfPermission(appContext, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         if (!granted || !NotificationManagerCompat.from(appContext).areNotificationsEnabled()) return
@@ -63,8 +72,8 @@ class UpdateCheckWorker @AssistedInject constructor(
         val pending = PendingIntent.getActivity(appContext, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tile_play)
-            .setContentTitle("Youtubly ${info.versionName} is available")
-            .setContentText(if (info.required) "Required update — tap to install" else "Tap to see what is new and update")
+            .setContentTitle(if (ready) "Youtubly ${info.versionName} is ready to install" else "Youtubly ${info.versionName} is available")
+            .setContentText(if (ready) "Tap to install it now" else if (info.required) "Required update - tap to install" else "Tap to see what is new and update")
             .setContentIntent(pending)
             .setAutoCancel(true)
             .build()

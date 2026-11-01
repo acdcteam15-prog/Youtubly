@@ -53,7 +53,8 @@ class ChannelViewModel @Inject constructor(
     private val channelRepository: ChannelRepository,
     private val accountRepository: AccountRepository,
     userPreferences: UserPreferences,
-    private val playlistIndex: PlaylistIndex
+    private val playlistIndex: PlaylistIndex,
+    videoRepository: com.youtubly.app.domain.repository.VideoRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ChannelUiState>(ChannelUiState.Loading)
@@ -72,6 +73,14 @@ class ChannelViewModel @Inject constructor(
 
     private val _sort = MutableStateFlow(VideoSort.LATEST)
     val sort: StateFlow<VideoSort> = _sort
+
+    /** The video of this channel you stopped in the middle of (most recent first), for the Continue button. */
+    val continueVideo: StateFlow<Video?> = kotlinx.coroutines.flow.combine(_uiState, videoRepository.observeHistoryEntries("")) { st, entries ->
+        val key = (st as? ChannelUiState.Success)?.channel?.url?.let { com.youtubly.app.blur.channelKeyOf(it) } ?: return@combine null
+        entries.firstOrNull { e ->
+            e.progress in 0.02f..0.9f && com.youtubly.app.blur.channelKeyOf(e.video.uploaderUrl) == key
+        }?.video
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /** Whether the optional Shorts tab is switched on in Settings. */
     val showShorts: StateFlow<Boolean> = userPreferences.showShortsTab

@@ -381,6 +381,32 @@ fun YoutublyNavHost(
                         com.youtubly.app.presentation.system.StorageScreen(onBack = { nav.popBackStack() })
                     }
                     composable(
+                        Screen.ChannelGroups.route,
+                        enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(DUR)) + fadeIn(tween(DUR)) },
+                        exitTransition = { fadeOut(tween(200)) },
+                        popEnterTransition = { fadeIn(tween(250)) },
+                        popExitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(DUR)) + fadeOut(tween(DUR)) }
+                    ) {
+                        com.youtubly.app.presentation.library.ChannelGroupsScreen(
+                            onBack = { nav.popBackStack() },
+                            onOpenGroup = { g -> nav.navigate(Screen.ChannelGroup.createRoute(g)) }
+                        )
+                    }
+                    composable(
+                        Screen.ChannelGroup.route,
+                        arguments = listOf(navArgument("name") { type = NavType.StringType }),
+                        enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(DUR)) + fadeIn(tween(DUR)) },
+                        exitTransition = { fadeOut(tween(200)) },
+                        popEnterTransition = { fadeIn(tween(250)) },
+                        popExitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(DUR)) + fadeOut(tween(DUR)) }
+                    ) { backStack ->
+                        com.youtubly.app.presentation.library.GroupFeedScreen(
+                            group = backStack.arguments?.getString("name").orEmpty(),
+                            onBack = { nav.popBackStack() },
+                            onVideoClick = { v -> playerSheet.open(v.url) }
+                        )
+                    }
+                    composable(
                         Screen.Updates.route,
                         enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(DUR)) + fadeIn(tween(DUR)) },
                         exitTransition = { fadeOut(tween(200)) },

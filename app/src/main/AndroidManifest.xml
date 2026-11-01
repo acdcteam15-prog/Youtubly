@@ -98,6 +98,19 @@
                 android:resource="@xml/youtubly_widget_info" />
         </receiver>
 
+        <!-- Home-screen widget: your playlists. -->
+        <receiver
+            android:name=".widget.PlaylistsWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_playlists_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/playlists_widget_info" />
+        </receiver>
+
         <!-- Quick Settings tile: play/pause what's loaded, else open "Continue watching". -->
         <service
             android:name=".widget.YoutublyTileService"
@@ -133,6 +146,8 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <receiver android:name=".update.UpdateInstallReceiver" android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

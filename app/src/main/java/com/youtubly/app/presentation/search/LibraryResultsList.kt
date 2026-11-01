@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
@@ -55,7 +56,7 @@ data class LibraryHitRow(
     val onClick: () -> Unit
 )
 
-/** Flattens [LibraryResults] into rows, most specific first: channels, playlists, saved, downloads, history. */
+/** Flattens [LibraryResults] into rows, most specific first: channels, playlists, saved, downloads, history, notes. */
 fun LibraryResults.toRows(
     onVideo: (Video) -> Unit,
     onPlaylist: (Long) -> Unit,
@@ -76,6 +77,10 @@ fun LibraryResults.toRows(
     }
     history.forEach { v ->
         add(LibraryHitRow("h_${v.id}", Icons.Rounded.History, v.title, "Watched · ${v.uploaderName}", v.thumbnailUrl, v.id) { onVideo(v) })
+    }
+    notes.forEach { n ->
+        val video = Video(n.videoId, n.videoUrl, n.videoTitle, n.uploaderName, null, null, 0, -1, null)
+        add(LibraryHitRow("n_${n.id}", Icons.Rounded.EditNote, n.text, "Note at ${com.youtubly.app.domain.playback.Transcript.stamp(n.positionMs)} · ${n.videoTitle}", null, null) { onVideo(video) })
     }
 }
 

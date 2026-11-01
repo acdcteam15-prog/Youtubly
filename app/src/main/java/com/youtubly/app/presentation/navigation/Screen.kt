@@ -24,6 +24,10 @@ sealed class Screen(val route: String) {
     data object Storage : Screen("settings/storage")
     data object Backup : Screen("settings/backup")
     data object Updates : Screen("settings/updates")
+    data object ChannelGroups : Screen("groups")
+    data object ChannelGroup : Screen("group/{name}") {
+        fun createRoute(name: String): String = "group/${Uri.encode(name)}"
+    }
     data object SponsorBlock : Screen("settings/sponsorblock")
 
     data object PlaylistDetail : Screen("playlist/{playlistId}") {

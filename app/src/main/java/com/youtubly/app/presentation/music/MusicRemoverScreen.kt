@@ -43,11 +43,11 @@ fun MusicRemoverScreen(onBack: () -> Unit, onOpenWhitelist: () -> Unit, vm: Musi
     val loop by vm.abLoop.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.message.collect { snack.showSnackbar(it) } }
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scroll = TopAppBarDefaults.pinnedScrollBehavior()
 
     Scaffold(
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = { Text("Music remover") },
                 navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
                 scrollBehavior = scroll,

@@ -60,12 +60,14 @@ fun UpdatesScreen(onBack: () -> Unit, vm: UpdatesViewModel = hiltViewModel()) {
     var tokenText by rememberSaveable(savedToken) { mutableStateOf(savedToken) }
 
     // Opening the screen counts as asking: look right away (unless a result is already on screen).
-    LaunchedEffect(Unit) { if (state is UpdateState.Idle) vm.check() }
+    val installFailure by com.youtubly.app.update.UpdateInstallResult.failure.collectAsStateWithLifecycle()
+    val autoDownload by vm.autoDownload.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.restoreReady(); if (state is UpdateState.Idle) vm.check() }
     // The download finished: hand it to Android's installer (it shows its own confirmation).
     LaunchedEffect(state) {
         val s = state
         if (s is UpdateState.Ready) {
-            if (vm.canInstall()) context.startActivity(vm.installIntent(s.file)) else askAllow = true
+            if (vm.canInstall()) vm.install(s.file) else askAllow = true
         }
     }
 
@@ -115,11 +117,13 @@ fun UpdatesScreen(onBack: () -> Unit, vm: UpdatesViewModel = hiltViewModel()) {
                 }
                 is UpdateState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Ready to install ${s.info.versionName}.", style = MaterialTheme.typography.titleSmall)
-                    Button(onClick = { if (vm.canInstall()) context.startActivity(vm.installIntent(s.file)) else askAllow = true }, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { if (vm.canInstall()) vm.install(s.file) else askAllow = true }, modifier = Modifier.fillMaxWidth()) {
                         Text("Install")
                     }
                 }
             }
+
+            installFailure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             if (state !is UpdateState.Checking && state !is UpdateState.Downloading) {
                 OutlinedButton(onClick = vm::check, modifier = Modifier.fillMaxWidth()) { Text("Check for updates") }
@@ -131,6 +135,14 @@ fun UpdatesScreen(onBack: () -> Unit, vm: UpdatesViewModel = hiltViewModel()) {
                     Text("Looks twice a day and tells you when a new build is out.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = auto, onCheckedChange = vm::setAuto, modifier = Modifier.padding(start = 12.dp))
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Download updates on Wi-Fi", style = MaterialTheme.typography.bodyLarge)
+                    Text("The new build is fetched in the background, so installing it is one tap.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = autoDownload, onCheckedChange = vm::setAutoDownload, modifier = Modifier.padding(start = 12.dp))
             }
 
             TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced" else "Advanced") }

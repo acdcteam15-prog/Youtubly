@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.ui.focus.focusRequester
@@ -84,6 +85,7 @@ fun ChannelScreen(
     val playlistsFeed by viewModel.playlists.collectAsStateWithLifecycle()
     val sort by viewModel.sort.collectAsStateWithLifecycle()
     val showShorts by viewModel.showShorts.collectAsStateWithLifecycle()
+    val continueVideo by viewModel.continueVideo.collectAsStateWithLifecycle()
     LaunchedEffect(channelUrl) { viewModel.load(channelUrl) }
     androidx.activity.compose.BackHandler(enabled = search.open) { viewModel.closeSearch() }
     val refreshing = state is ChannelUiState.Loading
@@ -109,6 +111,7 @@ fun ChannelScreen(
                     playlists = playlistsFeed,
                     sort = sort,
                     showShorts = showShorts,
+                    continueVideo = continueVideo,
                     playlistIds = viewModel::playlistVideoIds,
                     onTab = viewModel::selectTab,
                     onSort = viewModel::setSort,
@@ -228,6 +231,7 @@ private fun ChannelContent(
     playlists: ChannelFeed<com.youtubly.app.domain.model.ChannelPlaylist>,
     sort: VideoSort,
     showShorts: Boolean,
+    continueVideo: Video?,
     playlistIds: (String) -> List<String>,
     onTab: (ChannelTabKind) -> Unit,
     onSort: (VideoSort) -> Unit,
@@ -339,6 +343,16 @@ private fun ChannelContent(
                 }
                 val blurRef = androidx.compose.runtime.remember(channel.url) { com.youtubly.app.blur.channelKeyOf(channel.url)?.let { com.youtubly.app.blur.ChannelRef(it, channel.name, channel.avatarUrl) } }
                 com.youtubly.app.presentation.blur.ChannelBlurChip(blurRef, Modifier.padding(top = 8.dp))
+                continueVideo?.let { v ->
+                    androidx.compose.material3.Button(
+                        onClick = { onVideoClick(v) },
+                        modifier = Modifier.padding(top = 10.dp).fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.PlayArrow, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Continue: ${v.title}", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                }
                 channel.description?.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(10.dp))
                     Text(
@@ -351,6 +365,9 @@ private fun ChannelContent(
                 }
                 Spacer(Modifier.height(12.dp))
             }
+        }
+        item(key = "groups") {
+            com.youtubly.app.presentation.library.ChannelGroupChips(channel.url, Modifier.padding(bottom = 8.dp))
         }
         if (tabs.size > 1) {
             item {

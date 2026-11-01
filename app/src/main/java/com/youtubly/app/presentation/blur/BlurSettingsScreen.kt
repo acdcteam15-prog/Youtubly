@@ -48,13 +48,13 @@ fun BlurSettingsScreen(onBack: () -> Unit, onOpenWhitelist: () -> Unit, vm: Blur
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { it?.let(vm::loadPreview) }
 
     val pickModelFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(vm::importModelFile) }
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     var confirmReset by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = { Text("Content blur") },
                 navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
                 actions = { IconButton({ confirmReset = true }) { Icon(Icons.Rounded.RestartAlt, "Reset") } },

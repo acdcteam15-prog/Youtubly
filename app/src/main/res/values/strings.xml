@@ -3,6 +3,8 @@
     <string name="widget_label">Youtubly</string>
     <string name="tile_label">Youtubly</string>
     <string name="widget_description">Continue watching and play/pause</string>
+    <string name="widget_playlists_label">Youtubly playlists</string>
+    <string name="widget_playlists_description">Your playlists, one tap to open</string>
     <string name="shortcut_search_short">Search</string>
     <string name="shortcut_search_long">Search YouTube</string>
     <string name="shortcut_continue_short">Continue</string>
