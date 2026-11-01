@@ -1,0 +1,2535 @@
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/MainActivity.kt y/Youtubely/app/src/main/java/com/youtubly/app/MainActivity.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/MainActivity.kt	2026-09-24 07:02:37.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/MainActivity.kt	2026-09-24 12:53:37.590021461 +0000
+@@ -41,6 +41,7 @@
+     @Inject lateinit var userPreferences: UserPreferences
+     @Inject lateinit var playerController: PlayerController
+     @Inject lateinit var connectivityObserver: ConnectivityObserver
++    @Inject lateinit var videoActions: com.youtubly.app.playback.VideoActions
+ 
+     @Volatile private var autoPip = true
+     private var lastRequestPip = 0
+@@ -78,10 +79,11 @@
+             CompositionLocalProvider(
+                 LocalDeArrow provides deArrow,
+                 LocalWatchProgress provides progress,
+-                LocalIsOnline provides isOnline
++                LocalIsOnline provides isOnline,
++                com.youtubly.app.presentation.components.LocalVideoActions provides videoActions
+             ) {
+                 YoutublyTheme {
+-                    YoutublyNavHost()
++                    YoutublyNavHost(playerController)
+                 }
+             }
+         }
+@@ -136,12 +138,36 @@
+      * on the home screen with nothing.
+      */
+     override fun onStop() {
+-        if (!isInPictureInPictureMode) tryEnterPip()
++        // Stopping while we're (or just were) a PiP window means the user swiped it away or
++        // tapped its ✕ — stop playback like YouTube does. Previously this path called
++        // tryEnterPip() again, which is why the video kept playing after closing PiP.
++        if (isInPictureInPictureMode || PipState.inPip.value) {
++            closedFromPip()
++        } else {
++            tryEnterPip()
++        }
+         super.onStop()
+     }
+ 
++    private fun closedFromPip() {
++        PipState.inPip.value = false
++        // Keep "resume where you left off" working for the video we're about to drop.
++        val id = playerController.currentVideoId
++        val pos = playerController.player.currentPosition
++        if (id != null) lifecycleScope.launch(kotlinx.coroutines.NonCancellable) { videoRepository.savePosition(id, pos) }
++        playerController.stop()
++        PipState.lastPlayerRoute.value = null
++    }
++
+     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
++        if (!isInPictureInPictureMode &&
++            !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
++        ) {
++            // Some Android versions deliver this after onStop when the PiP window is closed.
++            closedFromPip()
++            return
++        }
+         PipState.inPip.value = isInPictureInPictureMode
+     }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/data/local/datastore/UserPreferences.kt y/Youtubely/app/src/main/java/com/youtubly/app/data/local/datastore/UserPreferences.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/data/local/datastore/UserPreferences.kt	2026-09-24 07:02:40.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/data/local/datastore/UserPreferences.kt	2026-09-24 13:42:42.160254978 +0000
+@@ -4,6 +4,7 @@
+ import androidx.datastore.preferences.core.booleanPreferencesKey
+ import androidx.datastore.preferences.core.edit
+ import androidx.datastore.preferences.core.floatPreferencesKey
++import androidx.datastore.preferences.core.stringSetPreferencesKey
+ import androidx.datastore.preferences.preferencesDataStore
+ import com.youtubly.app.core.Constants
+ import dagger.hilt.android.qualifiers.ApplicationContext
+@@ -28,6 +29,22 @@
+     val autoPip: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyPip] ?: true }
+     val playbackSpeed: Flow<Float> = context.userPrefsDataStore.data.map { it[keySpeed] ?: 1f }
+ 
++    private val keyHiddenVideos = stringSetPreferencesKey("hidden_video_ids")
++    private val keyBlockedChannels = stringSetPreferencesKey("blocked_channels")
++
++    /** Videos marked "Not interested" — hidden from every list in the app. */
++    val hiddenVideos: Flow<Set<String>> = context.userPrefsDataStore.data.map { it[keyHiddenVideos] ?: emptySet() }
++    /** Channels marked "Don't recommend channel" (channel URL and "name:<name>" keys). */
++    val blockedChannels: Flow<Set<String>> = context.userPrefsDataStore.data.map { it[keyBlockedChannels] ?: emptySet() }
++
++    private val keySubsSeen = stringSetPreferencesKey("subs_seen_ids")
++    /** Video ids already seen on the Subscriptions feed — for the "new uploads" badge. */
++    val subsSeenIds: Flow<Set<String>> = context.userPrefsDataStore.data.map { it[keySubsSeen] ?: emptySet() }
++    suspend fun setSubsSeenIds(v: Set<String>) { context.userPrefsDataStore.edit { it[keySubsSeen] = v } }
++
++    suspend fun setHiddenVideos(v: Set<String>) { context.userPrefsDataStore.edit { it[keyHiddenVideos] = v } }
++    suspend fun setBlockedChannels(v: Set<String>) { context.userPrefsDataStore.edit { it[keyBlockedChannels] = v } }
++
+     suspend fun setAutoSkipSponsors(v: Boolean) { context.userPrefsDataStore.edit { it[keyAutoSkipSponsors] = v } }
+     suspend fun setDeArrow(v: Boolean) { context.userPrefsDataStore.edit { it[keyDeArrow] = v } }
+     suspend fun setAutoPip(v: Boolean) { context.userPrefsDataStore.edit { it[keyPip] = v } }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/data/remote/innertube/InnertubeParser.kt y/Youtubely/app/src/main/java/com/youtubly/app/data/remote/innertube/InnertubeParser.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/data/remote/innertube/InnertubeParser.kt	2026-09-24 07:02:40.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/data/remote/innertube/InnertubeParser.kt	2026-09-24 14:17:45.737324425 +0000
+@@ -78,6 +78,8 @@
+             viewCount = parseCount(viewsText),
+             uploadDate = text(o["publishedTimeText"]),
+             isLive = isLive,
++            uploaderAvatarUrl = findObject(o, "channelThumbnailSupportedRenderers")?.let { findObject(it, "thumbnail") }?.let(::bestThumb)
++                ?: bestThumb(o.obj("channelThumbnail")),
+             notInterestedToken = notInterested,
+             dontRecommendChannelToken = dontRecommend
+         )
+@@ -92,20 +94,33 @@
+         if (menu == null) return null to null
+         var notInterested: String? = null
+         var dontRecommend: String? = null
++
++        fun classify(label: String, icon: String, token: String) {
++            val l = label.replace('\u2019', '\'')
++            when {
++                icon == "NOT_INTERESTED" || l.contains("Not interested", true) ->
++                    if (notInterested == null) notInterested = token
++                icon == "REMOVE" || l.contains("Don't recommend", true) || l.contains("recommend channel", true) ->
++                    if (dontRecommend == null) dontRecommend = token
++            }
++        }
++
+         fun walk(el: JsonElement) {
+             when (el) {
+                 is JsonObject -> {
+-                    val item = el["menuServiceItemRenderer"] as? JsonObject
+-                        ?: el["menuServiceItemDownloadRenderer"] as? JsonObject
+-                    if (item != null) {
+-                        val label = text(item["text"]).orEmpty()
+-                        val token = findString(item.obj("serviceEndpoint"), "params")
+-                            ?: findString(item.obj("serviceEndpoint")?.obj("feedbackEndpoint"), "feedbackToken")
++                    // Classic menu: menuServiceItemRenderer { text, icon.iconType, serviceEndpoint.feedbackEndpoint }
++                    (el["menuServiceItemRenderer"] as? JsonObject)?.let { item ->
++                        val token = findString(item.obj("serviceEndpoint")?.let { findObject(it, "feedbackEndpoint") }, "feedbackToken")
++                        if (token != null) classify(text(item["text"]).orEmpty(), item.obj("icon")?.str("iconType").orEmpty(), token)
++                    }
++                    // 2025+ lockup sheet: listItemViewModel { title.content, leadingImage…imageName, rendererContext…feedbackEndpoint }
++                    (el["listItemViewModel"] as? JsonObject)?.let { item ->
++                        val endpoint = findObject(item, "feedbackEndpoint")
++                        val token = findString(endpoint, "feedbackToken")
+                         if (token != null) {
+-                            if (label.contains("Not interested", true)) notInterested = token
+-                            if (label.contains("Don't recommend", true) || label.contains("recommend this channel", true)) {
+-                                dontRecommend = token
+-                            }
++                            val label = item.obj("title")?.str("content").orEmpty()
++                            val icon = findString(item.obj("leadingImage"), "imageName").orEmpty()
++                            classify(label, icon, token)
+                         }
+                     }
+                     for (v in el.values) walk(v)
+@@ -138,7 +153,7 @@
+         val channelId = findString(md, "browseId")?.takeIf { it.startsWith("UC") }
+         val thumb = o.obj("contentImage")?.let { findArray(it, "sources") }
+             ?.mapNotNull { (it as? JsonObject)?.str("url") }?.lastOrNull()
+-        val (notInterested, dontRecommend) = parseFeedbackTokens(findObject(o, "menuOnTap") ?: o.obj("menu"))
++        val (notInterested, dontRecommend) = parseFeedbackTokens(o)
+         return Video(
+             id = id,
+             url = "https://www.youtube.com/watch?v=$id",
+@@ -150,6 +165,8 @@
+             viewCount = parseCount(views),
+             uploadDate = date,
+             isLive = isLive,
++            uploaderAvatarUrl = findObject(md, "avatarViewModel")?.let { findArray(it, "sources") }
++                ?.mapNotNull { (it as? JsonObject)?.str("url") }?.lastOrNull(),
+             notInterestedToken = notInterested,
+             dontRecommendChannelToken = dontRecommend
+         )
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/Mappers.kt y/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/Mappers.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/Mappers.kt	2026-09-24 07:02:39.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/Mappers.kt	2026-09-24 14:19:52.484929746 +0000
+@@ -17,7 +17,9 @@
+     thumbnailUrl = thumbnails.maxByOrNull { it.height }?.url,
+     duration = duration,
+     viewCount = viewCount,
+-    uploadDate = textualUploadDate
++    uploadDate = textualUploadDate,
++    isLive = streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM,
++    uploaderAvatarUrl = runCatching { uploaderAvatars.maxByOrNull { it.height }?.url }.getOrNull()
+ )
+ 
+ fun extractVideoId(url: String): String {
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/StreamExtractorService.kt y/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/StreamExtractorService.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/StreamExtractorService.kt	2026-09-24 07:02:39.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/data/remote/newpipe/StreamExtractorService.kt	2026-09-24 14:18:18.743709061 +0000
+@@ -70,7 +70,7 @@
+                 }
+                 .distinctBy { it.label }
+                 .sortedWith(compareBy({ it.autoGenerated }, { it.label })),
+-            chapters = info.streamSegments.map { Chapter(it.title, it.startTimeSeconds) }
++            chapters = info.streamSegments.map { Chapter(it.title, it.startTimeSeconds, it.previewUrl?.takeIf { u -> u.isNotBlank() }) }
+         )
+     }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/data/repository/AccountRepositoryImpl.kt y/Youtubely/app/src/main/java/com/youtubly/app/data/repository/AccountRepositoryImpl.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/data/repository/AccountRepositoryImpl.kt	2026-09-24 07:02:39.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/data/repository/AccountRepositoryImpl.kt	2026-09-24 08:07:40.634160361 +0000
+@@ -92,6 +92,8 @@
+     override suspend fun sendFeedback(token: String): Result<Unit> = safeIoCall(dispatchers) {
+         client.post("feedback") {
+             putJsonArray("feedbackTokens") { add(JsonPrimitive(token)) }
++            put("isFeedbackTokenUnencrypted", false)
++            put("shouldMerge", false)
+         }
+         Unit
+     }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/domain/model/StreamInfoResult.kt y/Youtubely/app/src/main/java/com/youtubly/app/domain/model/StreamInfoResult.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/domain/model/StreamInfoResult.kt	2026-09-24 07:02:41.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/domain/model/StreamInfoResult.kt	2026-09-24 14:18:18.743529505 +0000
+@@ -14,7 +14,7 @@
+     val autoGenerated: Boolean
+ )
+ 
+-data class Chapter(val title: String, val startSeconds: Int)
++data class Chapter(val title: String, val startSeconds: Int, val thumbnailUrl: String? = null)
+ 
+ data class StreamInfoResult(
+     val video: Video,
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/domain/model/Video.kt y/Youtubely/app/src/main/java/com/youtubly/app/domain/model/Video.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/domain/model/Video.kt	2026-09-24 07:02:41.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/domain/model/Video.kt	2026-09-24 14:17:45.736814560 +0000
+@@ -11,6 +11,8 @@
+     val viewCount: Long,
+     val uploadDate: String?,
+     val isLive: Boolean = false,
++    /** Channel avatar, when the source provides one (falls back to a letter badge). */
++    val uploaderAvatarUrl: String? = null,
+     /** Opaque feedback tokens from YouTube's menu, used to remove this video from Home/Subs. */
+     val notInterestedToken: String? = null,
+     val dontRecommendChannelToken: String? = null
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/playback/PipState.kt y/Youtubely/app/src/main/java/com/youtubly/app/playback/PipState.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/playback/PipState.kt	2026-09-24 07:02:39.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/playback/PipState.kt	2026-09-24 08:05:17.501182778 +0000
+@@ -16,4 +16,8 @@
+      */
+     val requestPip = mutableStateOf(0)
+     fun requestNow() { requestPip.value++ }
++
++    /** Nav route of the last opened player screen (streamed or local), so the in-app
++     *  mini player can bring the user back to it. */
++    val lastPlayerRoute = mutableStateOf<String?>(null)
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/playback/VideoActions.kt y/Youtubely/app/src/main/java/com/youtubly/app/playback/VideoActions.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/playback/VideoActions.kt	1970-01-01 00:00:00.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/playback/VideoActions.kt	2026-09-24 13:40:39.204878461 +0000
+@@ -0,0 +1,90 @@
++package com.youtubly.app.playback
++
++import com.youtubly.app.data.local.datastore.UserPreferences
++import com.youtubly.app.domain.model.Video
++import com.youtubly.app.domain.repository.AccountRepository
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.launch
++import javax.inject.Inject
++import javax.inject.Singleton
++
++/**
++ * YouTube-style long-press actions shared by every video list.
++ *
++ * "Not interested" / "Don't recommend channel" work everywhere: they're applied locally
++ * (persisted, so hidden items never come back in Home, Search, Up next…), and when the
++ * video came from the signed-in feed with a feedback token, the token is also sent to
++ * YouTube so it trains the real recommendations.
++ */
++@Singleton
++class VideoActions @Inject constructor(
++    private val prefs: UserPreferences,
++    private val accountRepository: AccountRepository,
++    private val getStreamInfo: com.youtubly.app.domain.usecase.GetStreamInfoUseCase,
++    private val startDownload: com.youtubly.app.domain.usecase.StartDownloadUseCase
++) {
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
++
++    /** For UI work that must outlive the bottom sheet that started it (e.g. toast after a download is queued). */
++    fun launchUi(block: suspend () -> Unit) { uiScope.launch { block() } }
++
++    private val _hidden = MutableStateFlow<Set<String>>(emptySet())
++    val hiddenVideos: StateFlow<Set<String>> = _hidden
++    private val _blocked = MutableStateFlow<Set<String>>(emptySet())
++    val blockedChannels: StateFlow<Set<String>> = _blocked
++
++    init {
++        scope.launch { _hidden.value = prefs.hiddenVideos.first() }
++        scope.launch { _blocked.value = prefs.blockedChannels.first() }
++    }
++
++    private fun channelKeys(v: Video): Set<String> =
++        setOfNotNull(v.uploaderUrl?.trimEnd('/'), v.uploaderName.takeIf { it.isNotBlank() }?.let { "name:$it" })
++
++    fun isChannelBlocked(v: Video, blocked: Set<String> = _blocked.value): Boolean =
++        channelKeys(v).any { it in blocked }
++
++    fun notInterested(v: Video) {
++        _hidden.value = _hidden.value + v.id
++        scope.launch {
++            prefs.setHiddenVideos(_hidden.value)
++            v.notInterestedToken?.let { accountRepository.sendFeedback(it) }
++        }
++    }
++
++    fun dontRecommendChannel(v: Video) {
++        _blocked.value = _blocked.value + channelKeys(v)
++        scope.launch {
++            prefs.setBlockedChannels(_blocked.value)
++            v.dontRecommendChannelToken?.let { accountRepository.sendFeedback(it) }
++        }
++    }
++
++    /** Undo either action (local only — YouTube's own undo isn't exposed without a second token). */
++    fun undo(v: Video) {
++        _hidden.value = _hidden.value - v.id
++        _blocked.value = _blocked.value - channelKeys(v)
++        scope.launch {
++            prefs.setHiddenVideos(_hidden.value)
++            prefs.setBlockedChannels(_blocked.value)
++        }
++    }
++
++    /** Long-press → Download: resolves streams, then queues the same download the player uses. */
++    suspend fun download(v: Video, audioOnly: Boolean): Result<Unit> = runCatching {
++        val info = getStreamInfo(v.url).getOrThrow()
++        val url = if (audioOnly) info.audioStreams.maxByOrNull { it.averageBitrate }?.url
++        else info.videoStreams.firstOrNull { !it.isVideoOnly }?.url
++        requireNotNull(url) { "No downloadable stream for this video" }
++        startDownload(v.id, v.title, v.thumbnailUrl, url, audioOnly)
++        Unit
++    }
++
++    suspend fun saveToWatchLater(v: Video): Result<Unit> = accountRepository.setWatchLater(v.id, true)
++}
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelScreen.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelScreen.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelScreen.kt	2026-09-24 07:02:37.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelScreen.kt	2026-09-24 08:08:42.996430919 +0000
+@@ -83,8 +83,7 @@
+                 is ChannelUiState.Error -> ErrorView(s.message, onRetry = { viewModel.load(channelUrl, force = true) })
+                 is ChannelUiState.Success -> ChannelContent(
+                     s.channel,
+-                    onVideoClick,
+-                    onFeedback = { video, token -> viewModel.sendFeedback(video, token) }
++                    onVideoClick
+                 )
+             }
+         }
+@@ -103,7 +102,7 @@
+ }
+ 
+ @Composable
+-private fun ChannelContent(channel: Channel, onVideoClick: (Video) -> Unit, onFeedback: (Video, String) -> Unit) {
++private fun ChannelContent(channel: Channel, onVideoClick: (Video) -> Unit) {
+     val listState = rememberLazyListState()
+     // Parallax: banner drifts at half speed and fades as you scroll.
+     val scroll by remember {
+@@ -191,7 +190,7 @@
+                 v,
+                 onClick = { onVideoClick(v) },
+                 index = i,
+-                onFeedback = { token -> onFeedback(v, token) }
++                showBlockedChannel = true
+             )
+         }
+     }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelViewModel.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelViewModel.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelViewModel.kt	2026-09-24 07:02:37.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/channel/ChannelViewModel.kt	2026-09-24 08:08:42.996857123 +0000
+@@ -40,10 +40,4 @@
+         }
+     }
+ 
+-    /** Sends the feedback token and removes the video from the currently shown list right away. */
+-    fun sendFeedback(video: Video, token: String) {
+-        val s = _uiState.value as? ChannelUiState.Success ?: return
+-        _uiState.value = s.copy(channel = s.channel.copy(videos = s.channel.videos.filterNot { it.id == video.id }))
+-        viewModelScope.launch { accountRepository.sendFeedback(token) }
+-    }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Locals.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Locals.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Locals.kt	2026-09-24 07:02:37.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Locals.kt	2026-09-24 08:07:58.785566777 +0000
+@@ -10,6 +10,12 @@
+ import com.youtubly.app.data.repository.Branding
+ import com.youtubly.app.data.repository.DeArrowRepository
+ 
++/** Long-press actions (Not interested, Don't recommend…). Provided by MainActivity. */
++val LocalVideoActions = staticCompositionLocalOf<com.youtubly.app.playback.VideoActions?> { null }
++
++/** Opens a channel from anywhere (long-press → Go to channel). Provided by the nav host. */
++val LocalOpenChannel = staticCompositionLocalOf<((String) -> Unit)?> { null }
++
+ /** DeArrow lookups (null in previews). Provided by MainActivity. */
+ val LocalDeArrow = staticCompositionLocalOf<DeArrowRepository?> { null }
+ 
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/MiniPlayer.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/MiniPlayer.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/MiniPlayer.kt	1970-01-01 00:00:00.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/MiniPlayer.kt	2026-09-24 13:42:19.604738007 +0000
+@@ -0,0 +1,194 @@
++package com.youtubly.app.presentation.components
++
++import android.view.ViewGroup
++import androidx.annotation.OptIn
++import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.gestures.detectDragGestures
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.aspectRatio
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.offset
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.rounded.Close
++import androidx.compose.material.icons.rounded.GraphicEq
++import androidx.compose.material.icons.rounded.Pause
++import androidx.compose.material.icons.rounded.PlayArrow
++import androidx.compose.material3.Icon
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableFloatStateOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.draw.shadow
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.IntOffset
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.viewinterop.AndroidView
++import androidx.media3.common.Player
++import androidx.media3.common.util.UnstableApi
++import androidx.media3.ui.PlayerView
++import com.youtubly.app.playback.PlayerController
++import kotlin.math.roundToInt
++
++/** Snapshot of the singleton player, refreshed on every player event. */
++private data class MiniSnapshot(val active: Boolean, val playing: Boolean, val title: String)
++
++private fun PlayerController.snapshot() = MiniSnapshot(
++    active = currentVideoId != null && player.mediaItemCount > 0,
++    playing = player.isPlaying || (player.playWhenReady && player.playbackState == Player.STATE_BUFFERING),
++    title = player.mediaMetadata.title?.toString().orEmpty()
++)
++
++/**
++ * In-app picture-in-picture: a draggable floating video window shown over the rest of the
++ * app while something keeps playing after the user leaves the player screen.
++ * Tap = back to the full player, ✕ = stop. When the whole activity is in *system* PiP while
++ * the user was on another screen, it fills the PiP window so the video is still what shows.
++ */
++@OptIn(UnstableApi::class)
++@Composable
++fun MiniPlayer(
++    controller: PlayerController,
++    systemPip: Boolean,
++    bottomInset: androidx.compose.ui.unit.Dp,
++    onExpand: () -> Unit,
++    modifier: Modifier = Modifier
++) {
++    var snap by remember { mutableStateOf(controller.snapshot()) }
++    DisposableEffect(controller) {
++        val l = object : Player.Listener {
++            override fun onEvents(player: Player, events: Player.Events) { snap = controller.snapshot() }
++        }
++        controller.player.addListener(l)
++        snap = controller.snapshot()
++        onDispose { controller.player.removeListener(l) }
++    }
++    if (!snap.active) return
++    val audioOnly = controller.currentOptions.audioOnly
++
++    if (systemPip) {
++        Box(modifier.fillMaxSize().background(Color.Black)) {
++            if (!audioOnly) VideoSurface(controller, Modifier.fillMaxSize())
++        }
++        return
++    }
++
++    BoxWithConstraints(modifier.fillMaxSize()) {
++        val density = LocalDensity.current
++        val cardWidth = (maxWidth * 0.55f).coerceAtMost(280.dp)
++        val cardHeight = cardWidth * 9f / 16f + 40.dp
++        val margin = 12.dp
++        val maxX = with(density) { (maxWidth - cardWidth - margin * 2).toPx() }.coerceAtLeast(0f)
++        val maxY = with(density) { (maxHeight - cardHeight - margin * 2 - bottomInset).toPx() }.coerceAtLeast(0f)
++        // Start bottom-right, above the nav bar. Stored as fractions so rotation keeps it sensible.
++        var fx by rememberSaveable { mutableFloatStateOf(1f) }
++        var fy by rememberSaveable { mutableFloatStateOf(1f) }
++        // Horizontal drag past the screen edge = fling away to dismiss (like YouTube).
++        var overshoot by remember { mutableFloatStateOf(0f) }
++        val dismissPx = with(density) { 110.dp.toPx() }
++
++        Column(
++            Modifier
++                .offset { IntOffset((fx * maxX + overshoot).roundToInt(), (fy * maxY).roundToInt()) }
++                .graphicsLayer { alpha = 1f - (kotlin.math.abs(overshoot) / (dismissPx * 1.6f)).coerceIn(0f, 0.8f) }
++                .padding(margin)
++                .width(cardWidth)
++                .shadow(16.dp, RoundedCornerShape(16.dp))
++                .clip(RoundedCornerShape(16.dp))
++                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
++                .pointerInput(maxX, maxY) {
++                    detectDragGestures(
++                        onDragEnd = {
++                            if (kotlin.math.abs(overshoot) > dismissPx) {
++                                controller.stop(); com.youtubly.app.playback.PipState.lastPlayerRoute.value = null
++                            }
++                            overshoot = 0f
++                            fx = if (fx < 0.5f) 0f else 1f // snap to nearest side
++                        },
++                        onDragCancel = { overshoot = 0f }
++                    ) { change, drag ->
++                        change.consume()
++                        if (maxX > 0) {
++                            val nx = fx + drag.x / maxX
++                            when {
++                                nx < 0f -> { fx = 0f; overshoot += drag.x }
++                                nx > 1f -> { fx = 1f; overshoot += drag.x }
++                                overshoot != 0f -> overshoot = (overshoot + drag.x).let { if (it * overshoot <= 0f) 0f else it }
++                                else -> fx = nx
++                            }
++                        }
++                        if (maxY > 0) fy = (fy + drag.y / maxY).coerceIn(0f, 1f)
++                    }
++                }
++                .clickable(onClick = onExpand)
++        ) {
++            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
++                if (audioOnly) {
++                    Icon(Icons.Rounded.GraphicEq, null, tint = Color.White, modifier = Modifier.align(Alignment.Center).size(36.dp))
++                } else {
++                    VideoSurface(controller, Modifier.fillMaxSize())
++                }
++            }
++            Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
++                Text(
++                    snap.title,
++                    style = MaterialTheme.typography.labelMedium,
++                    color = MaterialTheme.colorScheme.onSurface,
++                    maxLines = 1,
++                    overflow = TextOverflow.Ellipsis,
++                    modifier = Modifier.weight(1f)
++                )
++                SmallIcon(if (snap.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause") {
++                    val p = controller.player
++                    if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_ENDED) p.seekTo(0); p.play() }
++                }
++                SmallIcon(Icons.Rounded.Close, "Close") { controller.stop(); com.youtubly.app.playback.PipState.lastPlayerRoute.value = null }
++            }
++        }
++    }
++}
++
++@Composable
++private fun SmallIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, onClick: () -> Unit) {
++    Box(
++        Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onClick),
++        contentAlignment = Alignment.Center
++    ) { Icon(icon, desc, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp)) }
++}
++
++@OptIn(UnstableApi::class)
++@Composable
++private fun VideoSurface(controller: PlayerController, modifier: Modifier) {
++    AndroidView(
++        modifier = modifier,
++        factory = { ctx ->
++            (android.view.LayoutInflater.from(ctx).inflate(com.youtubly.app.R.layout.mini_player_view, null) as PlayerView).apply {
++                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
++                player = controller.player
++            }
++        },
++        onRelease = { it.player = null }
++    )
++}
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Modifiers.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Modifiers.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Modifiers.kt	2026-09-24 07:02:37.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/Modifiers.kt	2026-09-24 08:07:58.785496700 +0000
+@@ -1,5 +1,7 @@
+ package com.youtubly.app.presentation.components
+ 
++import androidx.compose.foundation.combinedClickable
++
+ import androidx.compose.animation.core.Animatable
+ import androidx.compose.animation.core.Spring
+ import androidx.compose.animation.core.animateFloatAsState
+@@ -22,7 +24,12 @@
+ import kotlinx.coroutines.launch
+ 
+ /** Springy press-to-shrink click, the core "tactile" feel of the UI. */
+-fun Modifier.bounceClick(scaleDown: Float = 0.96f, onClick: () -> Unit): Modifier = composed {
++@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
++fun Modifier.bounceClick(
++    scaleDown: Float = 0.96f,
++    onLongClick: (() -> Unit)? = null,
++    onClick: () -> Unit
++): Modifier = composed {
+     val interaction = remember { MutableInteractionSource() }
+     val pressed by interaction.collectIsPressedAsState()
+     val scale by animateFloatAsState(
+@@ -33,10 +40,15 @@
+     val haptics = LocalHapticFeedback.current
+     this
+         .graphicsLayer { scaleX = scale; scaleY = scale }
+-        .clickable(interactionSource = interaction, indication = null) {
+-            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+-            onClick()
+-        }
++        .combinedClickable(
++            interactionSource = interaction,
++            indication = null,
++            onLongClick = onLongClick?.let { lc -> { haptics.performHapticFeedback(HapticFeedbackType.LongPress); lc() } },
++            onClick = {
++                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
++                onClick()
++            }
++        )
+ }
+ 
+ /** Staggered fade + rise entrance for list items (index-based delay, capped). */
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/SystemBars.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/SystemBars.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/SystemBars.kt	1970-01-01 00:00:00.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/SystemBars.kt	2026-09-24 13:41:54.888769858 +0000
+@@ -0,0 +1,42 @@
++package com.youtubly.app.presentation.components
++
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.ui.platform.LocalView
++import androidx.core.view.WindowCompat
++
++/** Forces light (white) status-bar icons while in composition; restores on leave. */
++@Composable
++fun LightStatusBarIcons() {
++    val view = LocalView.current
++    DisposableEffect(view) {
++        val window = (view.context as? android.app.Activity)?.window
++        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
++        val previous = controller?.isAppearanceLightStatusBars
++        controller?.isAppearanceLightStatusBars = false
++        onDispose { if (previous != null) controller.isAppearanceLightStatusBars = previous }
++    }
++}
++
++
++/** Landscape + hidden system bars while [fullscreen]; restores portrait/bars afterwards. */
++@Composable
++fun FullscreenEffect(fullscreen: Boolean) {
++    val view = LocalView.current
++    DisposableEffect(fullscreen) {
++        val activity = view.context as? android.app.Activity
++        val window = activity?.window
++        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
++        if (fullscreen) {
++            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
++            controller?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
++            controller?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
++        }
++        onDispose {
++            if (fullscreen) {
++                activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
++                controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
++            }
++        }
++    }
++}
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoCard.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoCard.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoCard.kt	2026-09-24 07:02:37.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoCard.kt	2026-09-24 14:17:53.813493126 +0000
+@@ -3,10 +3,27 @@
+ import androidx.compose.foundation.background
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.rounded.MoreVert
++import androidx.compose.material.icons.rounded.WatchLater
++import androidx.compose.material.icons.rounded.Share
++import androidx.compose.material.icons.rounded.Download
++import androidx.compose.material.icons.rounded.Headphones
++import androidx.compose.material.icons.rounded.Link
++import androidx.compose.material.icons.rounded.AccountCircle
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.layout.navigationBarsPadding
++import androidx.compose.material3.ExperimentalMaterial3Api
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.ModalBottomSheet
++import androidx.compose.material3.TextButton
++import androidx.compose.material3.rememberModalBottomSheetState
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.ui.graphics.vector.ImageVector
++import androidx.compose.ui.platform.LocalClipboardManager
++import androidx.compose.ui.text.AnnotatedString
++import kotlinx.coroutines.launch
+ import androidx.compose.material.icons.rounded.NotInterested
+ import androidx.compose.material.icons.rounded.PersonOff
+-import androidx.compose.material3.DropdownMenu
+-import androidx.compose.material3.DropdownMenuItem
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.IconButton
+ import androidx.compose.runtime.getValue
+@@ -35,10 +52,8 @@
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.Brush
+ import androidx.compose.ui.graphics.Color
+-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+ import androidx.compose.ui.layout.ContentScale
+ import androidx.compose.ui.platform.LocalContext
+-import androidx.compose.ui.platform.LocalHapticFeedback
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.dp
+@@ -49,24 +64,35 @@
+ import com.youtubly.app.presentation.theme.BrandGradient
+ import com.youtubly.app.presentation.theme.Ember
+ 
++@OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ fun VideoCard(
+     video: Video,
+     onClick: () -> Unit,
+     modifier: Modifier = Modifier,
+     index: Int = 0,
+-    /** Called with the chosen feedback token when the user picks "Not interested" or "Don't recommend channel". */
+-    onFeedback: ((token: String) -> Unit)? = null
++    /** On a channel's own page its videos stay visible even if the channel is blocked. */
++    showBlockedChannel: Boolean = false
+ ) {
++    val actions = LocalVideoActions.current
++    val hidden by (actions?.hiddenVideos ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptySet<String>()) }).collectAsState()
++    val blocked by (actions?.blockedChannels ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptySet<String>()) }).collectAsState()
++    // Set when the user removed this card just now, so we show YouTube's inline "Undo" row
++    // instead of silently collapsing it. Cards hidden in earlier sessions render nothing.
++    var removedMessage by remember(video.id) { mutableStateOf<String?>(null) }
++    val isHidden = video.id in hidden || (!showBlockedChannel && actions?.isChannelBlocked(video, blocked) == true)
++    if (isHidden) {
++        removedMessage?.let { msg -> RemovedRow(msg, onUndo = { actions?.undo(video); removedMessage = null }) }
++        return
++    }
++
++    var sheetOpen by remember(video.id) { mutableStateOf(false) }
+     val branding = rememberBranding(video.id)
+     val progress = LocalWatchProgress.current.value[video.id] ?: 0f
+-    val canGiveFeedback = onFeedback != null && (video.notInterestedToken != null || video.dontRecommendChannelToken != null)
+-    var menuOpen by remember(video.id) { mutableStateOf(false) }
+-    val haptics = LocalHapticFeedback.current
+     Column(
+         modifier
+             .staggeredEntrance(index)
+-            .bounceClick(onClick = onClick)
++            .bounceClick(onLongClick = { sheetOpen = true }, onClick = onClick)
+             .padding(horizontal = 16.dp, vertical = 10.dp)
+     ) {
+         Box(
+@@ -113,17 +139,7 @@
+         }
+         Spacer(Modifier.height(12.dp))
+         Row(verticalAlignment = Alignment.Top) {
+-            Box(
+-                Modifier.size(36.dp).clip(CircleShape).background(BrandGradient),
+-                contentAlignment = Alignment.Center
+-            ) {
+-                Text(
+-                    video.uploaderName.take(1).uppercase(),
+-                    color = Color.White,
+-                    style = MaterialTheme.typography.titleSmall,
+-                    fontWeight = FontWeight.Black
+-                )
+-            }
++            ChannelAvatar(video)
+             Spacer(Modifier.width(12.dp))
+             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                 Text(
+@@ -145,38 +161,127 @@
+                     overflow = TextOverflow.Ellipsis
+                 )
+             }
+-            if (canGiveFeedback) {
+-                Box {
+-                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
+-                        Icon(Icons.Rounded.MoreVert, "More options", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+-                    }
+-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+-                        video.notInterestedToken?.let { token ->
+-                            DropdownMenuItem(
+-                                text = { Text("Not interested") },
+-                                leadingIcon = { Icon(Icons.Rounded.NotInterested, null) },
+-                                onClick = {
+-                                    menuOpen = false
+-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+-                                    onFeedback?.invoke(token)
+-                                }
+-                            )
+-                        }
+-                        video.dontRecommendChannelToken?.let { token ->
+-                            DropdownMenuItem(
+-                                text = { Text("Don't recommend ${video.uploaderName}") },
+-                                leadingIcon = { Icon(Icons.Rounded.PersonOff, null) },
+-                                onClick = {
+-                                    menuOpen = false
+-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+-                                    onFeedback?.invoke(token)
+-                                }
+-                            )
+-                        }
+-                    }
++            IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(32.dp)) {
++                Icon(Icons.Rounded.MoreVert, "More options", tint = MaterialTheme.colorScheme.onSurfaceVariant)
++            }
++        }
++    }
++
++    if (sheetOpen) {
++        VideoActionsSheet(
++            video = video,
++            title = branding?.title ?: video.title,
++            onDismiss = { sheetOpen = false },
++            onRemoved = { removedMessage = it }
++        )
++    }
++}
++
++/** YouTube's long-press / ⋮ bottom sheet. */
++@OptIn(ExperimentalMaterial3Api::class)
++@Composable
++private fun VideoActionsSheet(video: Video, title: String, onDismiss: () -> Unit, onRemoved: (String) -> Unit) {
++    val context = LocalContext.current
++    val actions = LocalVideoActions.current
++    val openChannel = LocalOpenChannel.current
++    val clipboard = LocalClipboardManager.current
++    val scope = rememberCoroutineScope()
++    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
++
++    fun close(then: () -> Unit) {
++        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss(); then() }
++    }
++    fun toast(msg: String) = android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
++
++    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
++        Text(
++            title,
++            style = MaterialTheme.typography.titleSmall,
++            color = MaterialTheme.colorScheme.onSurface,
++            maxLines = 2,
++            overflow = TextOverflow.Ellipsis,
++            modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 8.dp)
++        )
++        SheetItem(Icons.Rounded.WatchLater, "Save to Watch later") {
++            close {
++                actions?.launchUi {
++                    val r = actions.saveToWatchLater(video)
++                    toast(if (r.isSuccess == true) "Saved to Watch later" else "Sign in to save to Watch later")
++                }
++            }
++        }
++        SheetItem(Icons.Rounded.Download, "Download video") {
++            close {
++                toast("Preparing download…")
++                actions?.launchUi {
++                    val r = actions.download(video, audioOnly = false)
++                    toast(if (r.isSuccess == true) "Download started" else "Download failed: ${r.exceptionOrNull()?.message ?: "unknown"}")
++                }
++            }
++        }
++        SheetItem(Icons.Rounded.Headphones, "Download audio only") {
++            close {
++                toast("Preparing download…")
++                actions?.launchUi {
++                    val r = actions.download(video, audioOnly = true)
++                    toast(if (r.isSuccess == true) "Download started" else "Download failed: ${r.exceptionOrNull()?.message ?: "unknown"}")
+                 }
+             }
+         }
++        SheetItem(Icons.Rounded.Share, "Share") {
++            close {
++                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
++                    type = "text/plain"
++                    putExtra(android.content.Intent.EXTRA_TEXT, video.url)
++                    putExtra(android.content.Intent.EXTRA_SUBJECT, title)
++                }
++                context.startActivity(android.content.Intent.createChooser(send, "Share video"))
++            }
++        }
++        SheetItem(Icons.Rounded.Link, "Copy link") {
++            close { clipboard.setText(AnnotatedString(video.url)); toast("Link copied") }
++        }
++        if (openChannel != null && video.uploaderUrl != null) {
++            SheetItem(Icons.Rounded.AccountCircle, "Go to channel") { close { openChannel(video.uploaderUrl) } }
++        }
++        HorizontalDivider(Modifier.padding(vertical = 4.dp))
++        SheetItem(Icons.Rounded.NotInterested, "Not interested") {
++            close { actions?.notInterested(video); onRemoved("Video removed") }
++        }
++        if (video.uploaderName.isNotBlank()) {
++            SheetItem(Icons.Rounded.PersonOff, "Don't recommend channel") {
++                close { actions?.dontRecommendChannel(video); onRemoved("We won't recommend videos from ${video.uploaderName}") }
++            }
++        }
++        Spacer(Modifier.navigationBarsPadding().height(8.dp))
++    }
++}
++
++@Composable
++private fun SheetItem(icon: ImageVector, label: String, onClick: () -> Unit) {
++    Row(
++        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp),
++        verticalAlignment = Alignment.CenterVertically
++    ) {
++        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface)
++        Spacer(Modifier.width(20.dp))
++        Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
++    }
++}
++
++@Composable
++private fun RemovedRow(message: String, onUndo: () -> Unit) {
++    Row(
++        Modifier
++            .fillMaxWidth()
++            .padding(horizontal = 16.dp, vertical = 10.dp)
++            .clip(MaterialTheme.shapes.medium)
++            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
++            .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
++        verticalAlignment = Alignment.CenterVertically
++    ) {
++        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
++        TextButton(onClick = onUndo) { Text("Undo") }
+     }
+ }
+ 
+@@ -207,6 +312,48 @@
+     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+ }
+ 
+-/** Data API returns ISO timestamps; NewPipe returns "3 days ago". Show both nicely. */
+-fun prettyDate(raw: String): String =
+-    if (raw.length >= 10 && raw[4] == '-' && raw[7] == '-') raw.substring(0, 10) else raw
++/** ISO timestamps (Data API / player) → "3 days ago"; NewPipe's "3 days ago" passes through. */
++fun prettyDate(raw: String): String {
++    if (!(raw.length >= 10 && raw[4] == '-' && raw[7] == '-')) return raw
++    val then = runCatching { java.time.OffsetDateTime.parse(raw).toInstant() }.getOrNull()
++        ?: runCatching { java.time.LocalDate.parse(raw.substring(0, 10)).atStartOfDay(java.time.ZoneOffset.UTC).toInstant() }.getOrNull()
++        ?: return raw.substring(0, 10)
++    val secs = java.time.Duration.between(then, java.time.Instant.now()).seconds.coerceAtLeast(0)
++    fun ago(n: Long, unit: String) = "$n $unit${if (n == 1L) "" else "s"} ago"
++    return when {
++        secs < 60 -> "just now"
++        secs < 3600 -> ago(secs / 60, "minute")
++        secs < 86_400 -> ago(secs / 3600, "hour")
++        secs < 604_800 -> ago(secs / 86_400, "day")
++        secs < 2_592_000 -> ago(secs / 604_800, "week")
++        secs < 31_536_000 -> ago(secs / 2_592_000, "month")
++        else -> ago(secs / 31_536_000, "year")
++    }
++}
++
++
++/** Real channel avatar when known, else the gradient letter badge. Tap → channel. */
++@Composable
++fun ChannelAvatar(video: Video, size: androidx.compose.ui.unit.Dp = 36.dp) {
++    val openChannel = LocalOpenChannel.current
++    val tap = if (openChannel != null && video.uploaderUrl != null) Modifier.clickable { openChannel(video.uploaderUrl) } else Modifier
++    Box(
++        Modifier.size(size).clip(CircleShape).background(BrandGradient).then(tap),
++        contentAlignment = Alignment.Center
++    ) {
++        Text(
++            video.uploaderName.take(1).uppercase(),
++            color = Color.White,
++            style = MaterialTheme.typography.titleSmall,
++            fontWeight = FontWeight.Black
++        )
++        if (video.uploaderAvatarUrl != null) {
++            AsyncImage(
++                model = video.uploaderAvatarUrl,
++                contentDescription = video.uploaderName,
++                contentScale = ContentScale.Crop,
++                modifier = Modifier.fillMaxSize()
++            )
++        }
++    }
++}
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoControls.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoControls.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoControls.kt	1970-01-01 00:00:00.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/components/VideoControls.kt	2026-09-24 14:50:26.708984196 +0000
+@@ -0,0 +1,403 @@
++package com.youtubly.app.presentation.components
++
++import androidx.compose.animation.AnimatedVisibility
++import androidx.compose.animation.core.animateFloatAsState
++import androidx.compose.animation.fadeIn
++import androidx.compose.animation.fadeOut
++import androidx.compose.foundation.Canvas
++import androidx.compose.foundation.background
++import androidx.compose.foundation.gestures.detectHorizontalDragGestures
++import androidx.compose.foundation.gestures.detectTapGestures
++import androidx.compose.foundation.gestures.detectVerticalDragGestures
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.foundation.layout.offset
++import androidx.compose.material.icons.rounded.FastForward
++import androidx.compose.material.icons.rounded.BrightnessMedium
++import androidx.compose.material.icons.rounded.VolumeUp
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.rounded.Forward10
++import androidx.compose.material.icons.rounded.Fullscreen
++import androidx.compose.material.icons.rounded.FullscreenExit
++import androidx.compose.material.icons.rounded.KeyboardArrowDown
++import androidx.compose.material.icons.rounded.Pause
++import androidx.compose.material.icons.rounded.PictureInPictureAlt
++import androidx.compose.material.icons.rounded.PlayArrow
++import androidx.compose.material.icons.rounded.Replay
++import androidx.compose.material.icons.rounded.Replay10
++import androidx.compose.material.icons.rounded.Settings
++import androidx.compose.material3.CircularProgressIndicator
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableFloatStateOf
++import androidx.compose.runtime.mutableIntStateOf
++import androidx.compose.runtime.mutableLongStateOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.geometry.CornerRadius
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.geometry.Size
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import androidx.media3.common.Player
++import com.youtubly.app.presentation.theme.Ember
++import kotlinx.coroutines.delay
++
++/**
++ * YouTube-style controls drawn in Compose over a controller-less PlayerView.
++ * Replaces Media3's default controller, whose big bottom bar covered half the video.
++ *
++ * Tap = show/hide (auto-hides after 3 s while playing) · double-tap left/right = ∓10 s ·
++ * swipe down = minimize to the in-app mini player · swipe up = fullscreen.
++ */
++@Composable
++fun VideoControls(
++    player: Player,
++    fullscreen: Boolean,
++    onMinimize: () -> Unit,
++    onToggleFullscreen: () -> Unit,
++    onDragY: (Float) -> Unit,
++    modifier: Modifier = Modifier,
++    onSettings: (() -> Unit)? = null,
++    showPipButton: Boolean = true,
++    chapterMarksMs: LongArray = LongArray(0)
++) {
++    var visible by remember { mutableStateOf(true) }
++    var interactions by remember { mutableIntStateOf(0) } // bump to restart the auto-hide timer
++    var isPlaying by remember { mutableStateOf(player.isPlaying) }
++    var buffering by remember { mutableStateOf(player.playbackState == Player.STATE_BUFFERING) }
++    var ended by remember { mutableStateOf(player.playbackState == Player.STATE_ENDED) }
++    var position by remember { mutableLongStateOf(player.currentPosition) }
++    var duration by remember { mutableLongStateOf(player.duration.coerceAtLeast(0)) }
++    var scrubFraction by remember { mutableStateOf<Float?>(null) }
++    var seekFlash by remember { mutableStateOf<String?>(null) }
++    // Hold-to-2× state
++    var boosted by remember { mutableStateOf(false) }
++    var speedBeforeBoost by remember { mutableFloatStateOf(1f) }
++    // Fullscreen edge swipes: brightness (left) / volume (right)
++    var gestureMode by remember { mutableIntStateOf(0) } // 0 drag-to-minimize, 1 brightness, 2 volume
++    var levelHud by remember { mutableStateOf<Pair<Int, Float>?>(null) } // (mode, 0..1)
++    val context = androidx.compose.ui.platform.LocalContext.current
++    val audio = remember { context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager }
++    val window = (context as? android.app.Activity)?.window
++    var brightness by remember {
++        mutableFloatStateOf(
++            window?.attributes?.screenBrightness?.takeIf { it >= 0f }
++                ?: (android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, 128) / 255f)
++        )
++    }
++    var volumeF by remember { mutableFloatStateOf(0f) }
++    // Brightness override only lives in fullscreen; hold-to-2× never outlives the screen.
++    LaunchedEffect(fullscreen) {
++        if (!fullscreen) window?.let { w -> w.attributes = w.attributes.apply { screenBrightness = -1f } }
++    }
++    DisposableEffect(Unit) {
++        onDispose {
++            if (boosted) player.setPlaybackSpeed(speedBeforeBoost)
++            window?.let { w -> w.attributes = w.attributes.apply { screenBrightness = -1f } }
++        }
++    }
++    LaunchedEffect(levelHud) { if (levelHud != null) { delay(900); levelHud = null } }
++
++    DisposableEffect(player) {
++        val l = object : Player.Listener {
++            override fun onEvents(p: Player, events: Player.Events) {
++                isPlaying = p.isPlaying
++                buffering = p.playbackState == Player.STATE_BUFFERING
++                ended = p.playbackState == Player.STATE_ENDED
++                duration = p.duration.coerceAtLeast(0)
++                position = p.currentPosition
++                if (ended) visible = true
++            }
++        }
++        player.addListener(l)
++        onDispose { player.removeListener(l) }
++    }
++    LaunchedEffect(player) {
++        while (true) {
++            if (scrubFraction == null) position = player.currentPosition
++            delay(250)
++        }
++    }
++    LaunchedEffect(visible, isPlaying, interactions, scrubFraction) {
++        if (visible && isPlaying && scrubFraction == null) { delay(3000); visible = false }
++    }
++    LaunchedEffect(seekFlash) { if (seekFlash != null) { delay(600); seekFlash = null } }
++
++    fun seekBy(ms: Long) {
++        val target = (player.currentPosition + ms).coerceIn(0, if (duration > 0) duration else Long.MAX_VALUE)
++        player.seekTo(target); position = target
++        seekFlash = if (ms > 0) "+${ms / 1000}s" else "${ms / 1000}s"
++        interactions++
++    }
++    fun togglePlay() {
++        when {
++            ended -> { player.seekTo(0); player.play() }
++            player.isPlaying -> player.pause()
++            else -> player.play()
++        }
++        interactions++
++    }
++
++    val density = LocalDensity.current
++    val threshold = with(density) { 90.dp.toPx() }
++    var dragAccum by remember { mutableFloatStateOf(0f) }
++    val scrim by animateFloatAsState(if (visible) 0.45f else 0f, label = "scrim")
++
++    Box(
++        modifier
++            .fillMaxSize()
++            .background(Color.Black.copy(alpha = scrim))
++            .pointerInput(player) {
++                detectTapGestures(
++                    onPress = {
++                        tryAwaitRelease()
++                        if (boosted) { player.setPlaybackSpeed(speedBeforeBoost); boosted = false }
++                    },
++                    onLongPress = {
++                        if (player.isPlaying) {
++                            speedBeforeBoost = player.playbackParameters.speed
++                            player.setPlaybackSpeed(2f)
++                            boosted = true
++                            visible = false
++                        }
++                    },
++                    onTap = { visible = !visible; interactions++ },
++                    onDoubleTap = { o -> if (o.x < size.width / 2f) seekBy(-10_000) else seekBy(10_000) }
++                )
++            }
++            .pointerInput(fullscreen) {
++                detectVerticalDragGestures(
++                    onDragStart = { o ->
++                        gestureMode = when {
++                            !fullscreen -> 0
++                            o.x < size.width * 0.35f -> 1
++                            o.x > size.width * 0.65f -> 2
++                            else -> 0
++                        }
++                        if (gestureMode == 2) {
++                            volumeF = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat() /
++                                audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
++                        }
++                    },
++                    onDragEnd = {
++                        if (gestureMode == 0) when {
++                            dragAccum > threshold -> if (fullscreen) onToggleFullscreen() else onMinimize()
++                            dragAccum < -threshold && !fullscreen -> onToggleFullscreen()
++                        }
++                        dragAccum = 0f; onDragY(0f)
++                    },
++                    onDragCancel = { dragAccum = 0f; onDragY(0f) }
++                ) { change, dy ->
++                    change.consume()
++                    val delta = -dy / (size.height * 0.8f) // full swipe ≈ 0→100 %
++                    when (gestureMode) {
++                        1 -> {
++                            brightness = (brightness + delta).coerceIn(0.01f, 1f)
++                            window?.let { w -> w.attributes = w.attributes.apply { screenBrightness = brightness } }
++                            levelHud = 1 to brightness
++                        }
++                        2 -> {
++                            volumeF = (volumeF + delta).coerceIn(0f, 1f)
++                            val max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
++                            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, (volumeF * max).roundToIntSafe(), 0)
++                            levelHud = 2 to volumeF
++                        }
++                        else -> {
++                            dragAccum += dy
++                            onDragY(if (fullscreen) 0f else dragAccum.coerceAtLeast(0f))
++                        }
++                    }
++                }
++            }
++    ) {
++        seekFlash?.let {
++            Text(
++                it, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp,
++                modifier = Modifier.align(Alignment.Center).padding(bottom = 90.dp)
++            )
++        }
++        if (boosted) {
++            Row(
++                Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
++                    .clip(CircleShape).background(Color.Black.copy(alpha = 0.6f))
++                    .padding(horizontal = 14.dp, vertical = 6.dp),
++                verticalAlignment = Alignment.CenterVertically
++            ) {
++                Text("2×", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
++                Icon(Icons.Rounded.FastForward, null, tint = Color.White, modifier = Modifier.padding(start = 4.dp).size(18.dp))
++            }
++        }
++        levelHud?.let { (mode, v) ->
++            Row(
++                Modifier.align(Alignment.Center)
++                    .clip(RoundedCornerShape(14.dp)).background(Color.Black.copy(alpha = 0.65f))
++                    .padding(horizontal = 16.dp, vertical = 10.dp),
++                verticalAlignment = Alignment.CenterVertically
++            ) {
++                Icon(if (mode == 1) Icons.Rounded.BrightnessMedium else Icons.Rounded.VolumeUp, null, tint = Color.White)
++                Spacer(Modifier.width(10.dp))
++                Box(Modifier.width(110.dp).height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f))) {
++                    Box(Modifier.fillMaxWidth(v.coerceIn(0f, 1f)).height(4.dp).background(Color.White))
++                }
++                Text("${(v * 100).toInt()}%", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(start = 10.dp).width(36.dp))
++            }
++        }
++        if (buffering && !visible) {
++            CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp, modifier = Modifier.align(Alignment.Center).size(40.dp))
++        }
++
++        AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
++            Box(Modifier.fillMaxSize()) {
++                // Top row
++                Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
++                    CtlButton(Icons.Rounded.KeyboardArrowDown, "Minimize", onClick = onMinimize)
++                    Spacer(Modifier.weight(1f))
++                    if (showPipButton && !fullscreen) CtlButton(Icons.Rounded.PictureInPictureAlt, "Mini player", onClick = onMinimize)
++                    onSettings?.let { CtlButton(Icons.Rounded.Settings, "Playback settings") { it(); interactions++ } }
++                }
++                // Centre transport
++                Row(
++                    Modifier.align(Alignment.Center),
++                    horizontalArrangement = Arrangement.spacedBy(36.dp),
++                    verticalAlignment = Alignment.CenterVertically
++                ) {
++                    CtlButton(Icons.Rounded.Replay10, "Back 10 seconds", size = 44) { seekBy(-10_000) }
++                    Box(
++                        Modifier.size(64.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
++                        contentAlignment = Alignment.Center
++                    ) {
++                        if (buffering) CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp, modifier = Modifier.size(40.dp))
++                        else IconButton(onClick = ::togglePlay, modifier = Modifier.size(64.dp)) {
++                            Icon(
++                                when { ended -> Icons.Rounded.Replay; isPlaying -> Icons.Rounded.Pause; else -> Icons.Rounded.PlayArrow },
++                                "Play/pause", tint = Color.White, modifier = Modifier.size(40.dp)
++                            )
++                        }
++                    }
++                    CtlButton(Icons.Rounded.Forward10, "Forward 10 seconds", size = 44) { seekBy(10_000) }
++                }
++                // Bottom: times + fullscreen, then a slim seek bar
++                Column(
++                    Modifier
++                        .align(Alignment.BottomCenter)
++                        .fillMaxWidth()
++                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f))))
++                ) {
++                    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
++                        val shown = scrubFraction?.let { (it * duration).toLong() } ?: position
++                        Text(formatDuration(shown / 1000), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
++                        Text("  /  ${formatDuration(duration / 1000)}", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
++                        Spacer(Modifier.weight(1f))
++                        CtlButton(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, "Fullscreen", size = 26, onClick = onToggleFullscreen)
++                    }
++                    scrubFraction?.let { f ->
++                        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
++                            val bubbleW = 64.dp
++                            val x = (maxWidth * f - bubbleW / 2).coerceIn(0.dp, maxWidth - bubbleW)
++                            Text(
++                                formatDuration((f * duration).toLong() / 1000),
++                                color = Color.Black,
++                                fontWeight = FontWeight.Bold,
++                                fontSize = 13.sp,
++                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
++                                modifier = Modifier.offset(x = x).width(bubbleW)
++                                    .clip(RoundedCornerShape(8.dp)).background(Color.White)
++                                    .padding(vertical = 4.dp)
++                            )
++                        }
++                    }
++                    SeekBar(
++                        fraction = scrubFraction ?: if (duration > 0) position.toFloat() / duration else 0f,
++                        buffered = if (duration > 0) player.bufferedPosition.toFloat() / duration else 0f,
++                        marks = if (duration > 0) chapterMarksMs.map { it.toFloat() / duration } else emptyList(),
++                        onScrub = { scrubFraction = it; interactions++ },
++                        onScrubEnd = { f -> player.seekTo((f * duration).toLong()); position = (f * duration).toLong(); scrubFraction = null }
++                    )
++                }
++            }
++        }
++        // Always-visible hairline progress when controls are hidden (like YouTube).
++        if (!visible && duration > 0) {
++            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(2.dp).background(Color.White.copy(alpha = 0.25f))) {
++                Box(Modifier.fillMaxWidth((position.toFloat() / duration).coerceIn(0f, 1f)).height(2.dp).background(Ember))
++            }
++        }
++    }
++}
++
++@Composable
++private fun CtlButton(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, size: Int = 24, onClick: () -> Unit) {
++    IconButton(onClick = onClick, modifier = Modifier.size((size + 20).dp)) {
++        Icon(icon, desc, tint = Color.White, modifier = Modifier.size(size.dp))
++    }
++}
++
++@Composable
++private fun SeekBar(
++    fraction: Float,
++    buffered: Float,
++    marks: List<Float>,
++    onScrub: (Float) -> Unit,
++    onScrubEnd: (Float) -> Unit
++) {
++    var width by remember { mutableFloatStateOf(1f) }
++    var last by remember { mutableFloatStateOf(0f) }
++    Canvas(
++        Modifier
++            .fillMaxWidth()
++            .height(24.dp)
++            .padding(horizontal = 12.dp)
++            .pointerInput(Unit) {
++                width = size.width.toFloat()
++                detectTapGestures { o -> val f = (o.x / size.width).coerceIn(0f, 1f); onScrub(f); onScrubEnd(f) }
++            }
++            .pointerInput(Unit) {
++                detectHorizontalDragGestures(
++                    onDragStart = { o -> last = (o.x / size.width).coerceIn(0f, 1f); onScrub(last) },
++                    onDragEnd = { onScrubEnd(last) },
++                    onDragCancel = { onScrubEnd(last) }
++                ) { change, _ ->
++                    change.consume()
++                    last = (change.position.x / size.width).coerceIn(0f, 1f); onScrub(last)
++                }
++            }
++    ) {
++        val cy = size.height / 2f
++        val h = 3.dp.toPx()
++        val r = CornerRadius(h / 2, h / 2)
++        drawRoundRect(Color.White.copy(alpha = 0.25f), Offset(0f, cy - h / 2), Size(size.width, h), r)
++        drawRoundRect(Color.White.copy(alpha = 0.45f), Offset(0f, cy - h / 2), Size(size.width * buffered.coerceIn(0f, 1f), h), r)
++        drawRoundRect(Ember, Offset(0f, cy - h / 2), Size(size.width * fraction.coerceIn(0f, 1f), h), r)
++        marks.forEach { m -> drawRect(Color.Black.copy(alpha = 0.6f), Offset(size.width * m - 1.dp.toPx(), cy - h / 2), Size(2.dp.toPx(), h)) }
++        drawCircle(Ember, 6.dp.toPx(), Offset(size.width * fraction.coerceIn(0f, 1f), cy))
++    }
++}
++
++private fun Float.roundToIntSafe(): Int = kotlin.math.round(this).toInt()
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerScreen.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerScreen.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerScreen.kt	2026-09-24 07:14:49.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerScreen.kt	2026-09-24 13:42:09.333764034 +0000
+@@ -16,6 +16,7 @@
+ import androidx.compose.foundation.shape.CircleShape
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.rounded.ArrowBack
++import androidx.compose.material.icons.rounded.KeyboardArrowDown
+ import androidx.compose.material.icons.rounded.Headphones
+ import androidx.compose.material.icons.rounded.PictureInPictureAlt
+ import androidx.compose.material.icons.rounded.SkipNext
+@@ -28,8 +29,12 @@
+ import androidx.compose.runtime.DisposableEffect
+ import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.graphicsLayer
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.platform.LocalContext
+@@ -60,6 +65,10 @@
+ 
+     LaunchedEffect(downloadId) { viewModel.load(downloadId) }
+ 
++    // The video area sits right under the status bar on a black background, so the
++    // clock/battery icons must be light here regardless of the app theme.
++    com.youtubly.app.presentation.components.LightStatusBarIcons()
++
+     // Keep the screen awake exactly while something is actually playing.
+     val activity = LocalContext.current as? android.app.Activity
+     DisposableEffect(activity, viewModel.playerController.player) {
+@@ -81,6 +90,11 @@
+         }
+     }
+ 
++    var fullscreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
++    var dragY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
++    com.youtubly.app.presentation.components.FullscreenEffect(fullscreen && !inPip)
++    androidx.activity.compose.BackHandler(enabled = fullscreen) { fullscreen = false }
++
+     Box(Modifier.fillMaxSize().background(if (inPip) Color.Black else MaterialTheme.colorScheme.background)) {
+         when (val s = state) {
+             is LocalPlayerUiState.Loading -> if (!inPip) SkeletonFeed(count = 1)
+@@ -91,27 +105,19 @@
+                     Modifier
+                         .fillMaxWidth()
+                         .background(Color.Black)
+-                        .then(if (inPip) Modifier.fillMaxSize() else Modifier.statusBarsPadding().aspectRatio(16f / 9f))
++                        .graphicsLayer { translationY = dragY; val k = 1f - (dragY / 2000f).coerceIn(0f, 0.25f); scaleX = k; scaleY = k }
++                        .then(if (inPip || fullscreen) Modifier.fillMaxSize() else Modifier.statusBarsPadding().aspectRatio(16f / 9f))
+                 ) {
+                     AndroidView(
+                         modifier = Modifier.fillMaxSize(),
+                         factory = { ctx ->
+                             PlayerView(ctx).apply {
+                                 layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+-                                // See PlayerScreen: SurfaceView (the default) doesn't reliably
+-                                // survive the window/z-order changes of entering or leaving PiP.
+                                 player = viewModel.playerController.player
+-                                setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+-                                setShowNextButton(false)
+-                                setShowPreviousButton(false)
+-                                controllerAutoShow = true
++                                useController = false // Compose VideoControls instead
+                             }
+                         },
+-                        update = { view ->
+-                            view.useController = !inPip
+-                            if (inPip) view.hideController()
+-                            view.requestLayout()
+-                        },
++                        update = { view -> view.requestLayout() },
+                         onRelease = { it.player = null }
+                     )
+                     if (!inPip) {
+@@ -124,23 +130,17 @@
+                                 )
+                             }
+                         }
+-                        IconButton(
+-                            onClick = onBack,
+-                            modifier = Modifier.padding(6.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
+-                        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = Color.White) }
+-                        if (!s.item.isAudioOnly) {
+-                            IconButton(
+-                                onClick = { PipState.requestNow() },
+-                                modifier = Modifier
+-                                    .align(Alignment.TopEnd)
+-                                    .padding(6.dp)
+-                                    .clip(CircleShape)
+-                                    .background(Color.Black.copy(alpha = 0.35f))
+-                            ) { Icon(Icons.Rounded.PictureInPictureAlt, "Picture in picture", tint = Color.White) }
+-                        }
++                        com.youtubly.app.presentation.components.VideoControls(
++                            player = viewModel.playerController.player,
++                            fullscreen = fullscreen,
++                            onMinimize = { if (fullscreen) fullscreen = false else onBack() },
++                            onToggleFullscreen = { fullscreen = !fullscreen },
++                            onDragY = { dragY = it },
++                            showPipButton = !s.item.isAudioOnly
++                        )
+                     }
+                 }
+-                if (!inPip) {
++                if (!inPip && !fullscreen) {
+                     Text(
+                         s.item.title,
+                         style = MaterialTheme.typography.titleMedium,
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerViewModel.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerViewModel.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerViewModel.kt	2026-09-24 07:02:37.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/downloads/LocalPlayerViewModel.kt	2026-09-24 08:05:17.501106350 +0000
+@@ -75,6 +75,7 @@
+         }
+         loadedId = item.id
+         _uiState.value = LocalPlayerUiState.Ready(item, hasNext = index < queue.lastIndex, hasPrevious = index > 0)
++        if (playerController.currentVideoId == item.id && playerController.player.mediaItemCount > 0) return
+         playerController.playLocal(path, item.title, item.isAudioOnly, item.id, item.thumbnailUrl)
+     }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeScreen.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeScreen.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeScreen.kt	2026-09-24 07:02:38.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeScreen.kt	2026-09-24 13:42:57.125350383 +0000
+@@ -1,5 +1,12 @@
+ package com.youtubly.app.presentation.home
+ 
++import androidx.compose.material.icons.rounded.Close
++import androidx.compose.ui.draw.clip
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.aspectRatio
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.background
+ import androidx.compose.animation.AnimatedContent
+ import androidx.compose.animation.core.tween
+ import androidx.compose.animation.fadeIn
+@@ -59,6 +66,9 @@
+     val feed by viewModel.feed.collectAsStateWithLifecycle()
+     val feeds by viewModel.feeds.collectAsStateWithLifecycle()
+     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
++    val resume by viewModel.continueWatching.collectAsStateWithLifecycle()
++    val dismissedResume by viewModel.dismissedResumeId.collectAsStateWithLifecycle()
++    val newSubs by viewModel.newSubsCount.collectAsStateWithLifecycle()
+     // Loading already covers both the initial load and any manual pull-to-refresh — reusing
+     // it here means the refresh spinner and the existing skeleton state can never disagree.
+     val refreshing = state is HomeUiState.Loading
+@@ -84,7 +94,13 @@
+                     FilterChip(
+                         selected = feed == f,
+                         onClick = { viewModel.select(f) },
+-                        label = { Text(f.label) },
++                        label = {
++                            if (f == Feed.Subscriptions && newSubs > 0 && feed != f) {
++                                androidx.compose.material3.BadgedBox(badge = {
++                                    androidx.compose.material3.Badge { Text(if (newSubs > 99) "99+" else newSubs.toString()) }
++                                }) { Text(f.label, modifier = Modifier.padding(end = 10.dp)) }
++                            } else Text(f.label)
++                        },
+                         shape = MaterialTheme.shapes.extraLarge,
+                         colors = FilterChipDefaults.filterChipColors(
+                             selectedContainerColor = MaterialTheme.colorScheme.primary,
+@@ -117,12 +133,16 @@
+                             }
+                             LaunchedEffect(nearEnd, s.videos.size) { if (nearEnd) viewModel.loadMore() }
+                             LazyColumn(state = listState, contentPadding = PaddingValues(top = 4.dp, bottom = 120.dp)) {
++                                resume?.takeIf { it.id != dismissedResume }?.let { r ->
++                                    item(key = "resume_${r.id}") {
++                                        ContinueWatchingBanner(r, onClick = { onVideoClick(r) }, onDismiss = { viewModel.dismissResume(r.id) })
++                                    }
++                                }
+                                 itemsIndexed(s.videos, key = { i, v -> "${v.id}_$i" }) { i, video ->
+                                     VideoCard(
+                                         video,
+                                         onClick = { onVideoClick(video) },
+-                                        index = i % 8,
+-                                        onFeedback = { token -> viewModel.sendFeedback(video, token) }
++                                        index = i % 8
+                                     )
+                                 }
+                                 if (s.loadingMore) {
+@@ -143,3 +163,40 @@
+         }
+     }
+ }
++
++
++@androidx.compose.runtime.Composable
++private fun ContinueWatchingBanner(video: com.youtubly.app.domain.model.Video, onClick: () -> Unit, onDismiss: () -> Unit) {
++    val progress = com.youtubly.app.presentation.components.LocalWatchProgress.current.value[video.id] ?: 0f
++    androidx.compose.foundation.layout.Row(
++        Modifier
++            .fillMaxWidth()
++            .padding(horizontal = 16.dp, vertical = 8.dp)
++            .clip(MaterialTheme.shapes.large)
++            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
++            .clickable(onClick = onClick)
++            .padding(10.dp),
++        verticalAlignment = Alignment.CenterVertically
++    ) {
++        Box(Modifier.width(120.dp).aspectRatio(16f / 9f).clip(MaterialTheme.shapes.small)) {
++            coil.compose.AsyncImage(
++                model = video.thumbnailUrl, contentDescription = null,
++                contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize()
++            )
++            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.3f))) {
++                Box(Modifier.fillMaxWidth(progress).height(3.dp).background(MaterialTheme.colorScheme.primary))
++            }
++        }
++        Spacer(Modifier.width(12.dp))
++        androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
++            Text("Continue watching", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
++            Text(
++                video.title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
++                maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
++            )
++        }
++        androidx.compose.material3.IconButton(onClick = onDismiss) {
++            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Dismiss", tint = MaterialTheme.colorScheme.onSurfaceVariant)
++        }
++    }
++}
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeViewModel.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeViewModel.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeViewModel.kt	2026-09-24 07:02:38.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/home/HomeViewModel.kt	2026-09-24 13:42:42.160699802 +0000
+@@ -19,6 +19,7 @@
+ import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.flow.stateIn
+ import kotlinx.coroutines.launch
++import kotlinx.coroutines.flow.first
+ import javax.inject.Inject
+ 
+ /** A Home tab. Signed in: your YouTube Home + Subscriptions. Signed out: category charts. */
+@@ -42,9 +43,43 @@
+ class HomeViewModel @Inject constructor(
+     private val getExplore: GetTrendingUseCase,
+     private val accountRepository: AccountRepository,
+-    authRepository: AuthRepository
++    authRepository: AuthRepository,
++    videoRepository: com.youtubly.app.domain.repository.VideoRepository,
++    private val userPreferences: com.youtubly.app.data.local.datastore.UserPreferences
+ ) : ViewModel() {
+ 
++    /** Most recent history item that's partly watched — for the "Continue watching" banner. */
++    val continueWatching: StateFlow<Video?> = kotlinx.coroutines.flow.combine(
++        videoRepository.observeHistory(), videoRepository.observeProgress()
++    ) { history, progress ->
++        history.firstOrNull { (progress[it.id] ?: 0f) in 0.03f..0.93f }
++    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
++
++    private val _dismissedResumeId = MutableStateFlow<String?>(null)
++    val dismissedResumeId: StateFlow<String?> = _dismissedResumeId
++    fun dismissResume(id: String) { _dismissedResumeId.value = id }
++
++    /** Uploads on the Subscriptions feed you haven't seen yet (0 = no badge). */
++    private val _newSubsCount = MutableStateFlow(0)
++    val newSubsCount: StateFlow<Int> = _newSubsCount
++
++    private fun refreshSubsBadge() {
++        viewModelScope.launch {
++            val seen = userPreferences.subsSeenIds.first()
++            accountRepository.feed(AccountFeed.SUBSCRIPTIONS).onSuccess { page ->
++                // First run: nothing is "new" yet — just take a baseline.
++                if (seen.isEmpty()) { markSubsSeen(page.videos); return@onSuccess }
++                _newSubsCount.value = page.videos.count { it.id !in seen }
++            }
++        }
++    }
++
++    private suspend fun markSubsSeen(videos: List<Video>) {
++        val merged = (videos.map { it.id } + userPreferences.subsSeenIds.first()).distinct().take(300).toSet()
++        userPreferences.setSubsSeenIds(merged)
++        _newSubsCount.value = 0
++    }
++
+     private val _uiState = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
+     val uiState: StateFlow<HomeUiState> = _uiState
+ 
+@@ -64,6 +99,7 @@
+         viewModelScope.launch {
+             signedInFlow.collect { si ->
+                 select(if (si) Feed.Home else Feed.Explore(ExploreCategory.MUSIC), force = true)
++                if (si) refreshSubsBadge() else _newSubsCount.value = 0
+             }
+         }
+     }
+@@ -85,7 +121,14 @@
+                     onFailure = { HomeUiState.Error(it.readable()) }
+                 )
+                 else -> accountRepository.feed(feed.toAccountFeed()).fold(
+-                    onSuccess = { HomeUiState.Success(it.videos, it.continuation) },
++                    onSuccess = {
++                        when (feed) {
++                            Feed.Subscriptions -> markSubsSeen(it.videos)
++                            Feed.Home -> refreshSubsBadge()
++                            else -> Unit
++                        }
++                        HomeUiState.Success(it.videos, it.continuation)
++                    },
+                     onFailure = { HomeUiState.Error(it.readable()) }
+                 )
+             }
+@@ -116,10 +159,4 @@
+ 
+     private fun Feed.toAccountFeed() = if (this == Feed.Subscriptions) AccountFeed.SUBSCRIPTIONS else AccountFeed.HOME
+ 
+-    /** Sends the feedback token and removes the video from the currently shown list right away. */
+-    fun sendFeedback(video: Video, token: String) {
+-        val s = _uiState.value as? HomeUiState.Success ?: return
+-        _uiState.value = s.copy(videos = s.videos.filterNot { it.id == video.id })
+-        viewModelScope.launch { accountRepository.sendFeedback(token) }
+-    }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/navigation/YoutublyNavHost.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/navigation/YoutublyNavHost.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/navigation/YoutublyNavHost.kt	2026-09-24 07:02:38.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/navigation/YoutublyNavHost.kt	2026-09-24 08:08:42.997368753 +0000
+@@ -14,6 +14,11 @@
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.statusBarsPadding
++import androidx.compose.foundation.layout.navigationBarsPadding
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.ui.unit.dp
++import com.youtubly.app.playback.PlayerController
++import com.youtubly.app.presentation.components.MiniPlayer
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.DownloadForOffline
+ import androidx.compose.material.icons.outlined.Home
+@@ -66,13 +71,29 @@
+ }
+ 
+ @Composable
+-fun YoutublyNavHost() {
++fun YoutublyNavHost(playerController: PlayerController) {
+     val nav = rememberNavController()
+     val entry by nav.currentBackStackEntryAsState()
+     val route = entry?.destination?.route
+     val inPip by PipState.inPip
++    val isPlayerRoute = route == Screen.Player.route || route == Screen.LocalPlayer.route
++
++    // Remember which player screen is "current" so the mini player can return to it.
++    LaunchedEffect(entry) {
++        val e = entry ?: return@LaunchedEffect
++        when (e.destination.route) {
++            Screen.Player.route -> PipState.lastPlayerRoute.value =
++                Screen.Player.createRoute(e.arguments?.getString("videoUrl").orEmpty())
++            Screen.LocalPlayer.route -> PipState.lastPlayerRoute.value =
++                Screen.LocalPlayer.createRoute(e.arguments?.getString("downloadId").orEmpty())
++        }
++    }
++
+     val showBanner = !inPip && route != Screen.Player.route && route != Screen.LocalPlayer.route
+ 
++    androidx.compose.runtime.CompositionLocalProvider(
++        com.youtubly.app.presentation.components.LocalOpenChannel provides { url: String -> nav.navigate(Screen.Channel.createRoute(url)) }
++    ) {
+     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+         NavHost(
+             navController = nav,
+@@ -159,8 +180,24 @@
+             OfflineBanner(modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding())
+         }
+ 
++        // In-app picture-in-picture (floating mini player) on every non-player screen.
++        if (!isPlayerRoute) {
++            MiniPlayer(
++                controller = playerController,
++                systemPip = inPip,
++                bottomInset = if (route in tabRoutes) 88.dp else 0.dp,
++                onExpand = {
++                    val target = PipState.lastPlayerRoute.value ?: return@MiniPlayer
++                    // Re-opens the player; it re-attaches to the already-playing video
++                    // instead of restarting it.
++                    nav.navigate(target) { launchSingleTop = true }
++                },
++                modifier = if (inPip) Modifier else Modifier.statusBarsPadding().navigationBarsPadding()
++            )
++        }
++
+         AnimatedVisibility(
+-            visible = route in tabRoutes,
++            visible = !inPip && route in tabRoutes,
+             enter = slideInVertically { it } + fadeIn(),
+             exit = slideOutVertically { it } + fadeOut(),
+             modifier = Modifier.align(Alignment.BottomCenter)
+@@ -179,3 +216,4 @@
+         }
+     }
+ }
++}
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerScreen.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerScreen.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerScreen.kt	2026-09-24 07:14:51.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerScreen.kt	2026-09-24 14:49:59.008166397 +0000
+@@ -1,5 +1,9 @@
+ package com.youtubly.app.presentation.player
+ 
++import kotlinx.coroutines.launch
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.derivedStateOf
++import androidx.compose.foundation.lazy.rememberLazyListState
+ import android.view.ViewGroup
+ import androidx.annotation.OptIn
+ import androidx.compose.animation.AnimatedContent
+@@ -44,6 +48,7 @@
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.rounded.ArrowBack
++import androidx.compose.material.icons.rounded.KeyboardArrowDown
+ import androidx.compose.material.icons.rounded.AudioFile
+ import androidx.compose.material.icons.rounded.Download
+ import androidx.compose.material.icons.rounded.ExpandMore
+@@ -79,6 +84,7 @@
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.graphicsLayer
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.draw.rotate
+ import androidx.compose.ui.graphics.Color
+@@ -99,6 +105,7 @@
+ import com.youtubly.app.presentation.components.VideoCard
+ import com.youtubly.app.presentation.components.bounceClick
+ import com.youtubly.app.presentation.components.formatCount
++import com.youtubly.app.presentation.components.prettyDate
+ import com.youtubly.app.presentation.components.formatDuration
+ import com.youtubly.app.presentation.components.rememberBranding
+ import com.youtubly.app.presentation.theme.BrandGradient
+@@ -122,6 +129,18 @@
+     val inPip by PipState.inPip
+ 
+     LaunchedEffect(videoUrl) { viewModel.load(videoUrl) }
++    // If playback was stopped while we were away (PiP closed, mini player ✕), reload this
++    // video when the screen comes back instead of showing a dead player.
++    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
++    DisposableEffect(lifecycleOwner, videoUrl) {
++        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
++            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME && viewModel.playerController.currentVideoId == null &&
++                viewModel.uiState.value is PlayerUiState.Success
++            ) viewModel.load(videoUrl, force = true)
++        }
++        lifecycleOwner.lifecycle.addObserver(obs)
++        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
++    }
+     LaunchedEffect(Unit) {
+         viewModel.events.collect { msg ->
+             toast = msg
+@@ -129,6 +148,10 @@
+             if (toast == msg) toast = null
+         }
+     }
++    // The video area sits right under the status bar on a black background, so the
++    // clock/battery icons must be light here regardless of the app theme.
++    com.youtubly.app.presentation.components.LightStatusBarIcons()
++
+     // Keep the screen awake exactly while something is actually playing.
+     val activity = LocalContext.current as? android.app.Activity
+     DisposableEffect(activity, viewModel.playerController.player) {
+@@ -150,6 +173,11 @@
+         }
+     }
+ 
++    var fullscreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
++    var dragY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
++    com.youtubly.app.presentation.components.FullscreenEffect(fullscreen && !inPip)
++    androidx.activity.compose.BackHandler(enabled = fullscreen) { fullscreen = false }
++
+     val success = state as? PlayerUiState.Success
+     val chapterMarkers = remember(success?.info?.video?.id, success?.info?.chapters) {
+         success?.info?.chapters?.filter { it.startSeconds > 0 }?.map { it.startSeconds * 1000L }?.toLongArray() ?: LongArray(0)
+@@ -161,67 +189,48 @@
+             Box(
+                 Modifier
+                     .fillMaxWidth()
++                    .graphicsLayer { translationY = dragY; val k = 1f - (dragY / 2000f).coerceIn(0f, 0.25f); scaleX = k; scaleY = k }
+                     .background(Color.Black)
+-                    .then(if (inPip) Modifier.fillMaxSize() else Modifier.statusBarsPadding().aspectRatio(16f / 9f))
++                    .then(
++                        when {
++                            inPip || fullscreen -> Modifier.fillMaxSize()
++                            else -> Modifier.statusBarsPadding().aspectRatio(16f / 9f)
++                        }
++                    )
+             ) {
+                 AndroidView(
+                     modifier = Modifier.fillMaxSize(),
+                     factory = { ctx ->
+                         PlayerView(ctx).apply {
+                             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+-                            // SurfaceView (the default) doesn't reliably survive the window/z-order
+-                            // changes that happen entering or leaving picture-in-picture — playback
+-                            // keeps running but the frame stops being presented. TextureView composites
+-                            // as a normal View and isn't affected by that transition.
+                             player = viewModel.playerController.player
+-                            setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+-                            setShowNextButton(false)
+-                            setShowPreviousButton(false)
+-                            controllerAutoShow = true
++                            // Controls are drawn in Compose (VideoControls) — Media3's default
++                            // controller had a tall bottom bar that covered half the video.
++                            useController = false
++                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                         }
+                     },
+-                    update = { view ->
+-                        view.useController = !inPip
+-                        if (inPip) view.hideController()
+-                        // The parent Box's size constraints flip abruptly between a fixed
+-                        // aspect ratio and fillMaxSize right as inPip changes; make sure the
+-                        // video surface picks up the new bounds immediately rather than on
+-                        // whatever the next unrelated layout pass happens to be.
+-                        view.requestLayout()
+-                        // Chapter boundaries as markers on the seek bar.
+-                        view.setExtraAdGroupMarkers(chapterMarkers, BooleanArray(chapterMarkers.size))
+-                    },
++                    update = { view -> view.requestLayout() },
+                     onRelease = { it.player = null }
+                 )
+                 if (!inPip) {
+                     androidx.compose.animation.AnimatedVisibility(
+                         success?.audioOnly == true, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()
+                     ) { AudioOnlyOverlay() }
+-                    IconButton(
+-                        onClick = onBack,
+-                        modifier = Modifier.padding(6.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
+-                    ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = Color.White) }
+-                    if (success != null) {
+-                        Row(
+-                            Modifier.align(Alignment.TopEnd).padding(6.dp),
+-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+-                        ) {
+-                            if (!success.audioOnly) {
+-                                IconButton(
+-                                    onClick = { com.youtubly.app.playback.PipState.requestNow() },
+-                                    modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
+-                                ) { Icon(Icons.Rounded.PictureInPictureAlt, "Picture in picture", tint = Color.White) }
+-                            }
+-                            IconButton(
+-                                onClick = { showSettings = true },
+-                                modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
+-                            ) { Icon(Icons.Rounded.Settings, "Playback settings", tint = Color.White) }
+-                        }
+-                    }
++                    com.youtubly.app.presentation.components.VideoControls(
++                        player = viewModel.playerController.player,
++                        fullscreen = fullscreen,
++                        onMinimize = { if (fullscreen) fullscreen = false else onBack() },
++                        onToggleFullscreen = { fullscreen = !fullscreen },
++                        onDragY = { dragY = it },
++                        onSettings = if (success != null) ({ showSettings = true }) else null,
++                        showPipButton = success?.audioOnly != true,
++                        chapterMarksMs = chapterMarkers
++                    )
+                 }
+             }
+ 
+-            if (!inPip) {
++            if (!inPip && !fullscreen) {
+                 AnimatedContent(
+                     targetState = state,
+                     transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(150)) },
+@@ -279,7 +288,12 @@
+     val liked = s.account?.liked == true
+     val subscribed = s.account?.subscribed == true
+ 
+-    LazyColumn(contentPadding = PaddingValues(bottom = 48.dp)) {
++    val listState = rememberLazyListState()
++    val scope = rememberCoroutineScope()
++    // Once the title block scrolls away, pin a compact title bar under the (already sticky) video.
++    val showCompact by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
++    Box {
++    LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 48.dp)) {
+         item {
+             Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                 Column(Modifier.animateContentSize(spring(stiffness = Spring.StiffnessMediumLow)).clickable { expanded = !expanded }) {
+@@ -298,20 +312,12 @@
+                     Text(
+                         listOfNotNull(
+                             video.viewCount.takeIf { it >= 0 }?.let { "${formatCount(it)} views" },
+-                            video.uploadDate,
++                            video.uploadDate?.let(::prettyDate),
+                             branding?.title?.let { if (expanded) null else "tap for original title" }
+                         ).joinToString("  ·  "),
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                     )
+-                    if (expanded && !s.info.description.isNullOrBlank()) {
+-                        Spacer(Modifier.height(12.dp))
+-                        Text(
+-                            android.text.Html.fromHtml(s.info.description, android.text.Html.FROM_HTML_MODE_COMPACT).toString(),
+-                            style = MaterialTheme.typography.bodyMedium,
+-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+-                        )
+-                    }
+                 }
+ 
+                 Spacer(Modifier.height(16.dp))
+@@ -395,40 +401,12 @@
+             }
+         }
+ 
++        if (!s.info.description.isNullOrBlank()) {
++            item(key = "description") { DescriptionCard(s.info.description!!) }
++        }
++
+         if (s.info.chapters.isNotEmpty()) {
+-            item { Column {
+-                Text(
+-                    "Chapters",
+-                    style = MaterialTheme.typography.titleMedium,
+-                    color = MaterialTheme.colorScheme.onSurface,
+-                    modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp)
+-                )
+-                LazyRow(
+-                    contentPadding = PaddingValues(horizontal = 16.dp),
+-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+-                ) {
+-                    items(s.info.chapters) { ch ->
+-                        Column(
+-                            Modifier
+-                                .width(160.dp)
+-                                .clip(MaterialTheme.shapes.medium)
+-                                .background(MaterialTheme.colorScheme.surfaceContainer)
+-                                .bounceClick { viewModel.seekTo(ch.startSeconds) }
+-                                .padding(12.dp)
+-                        ) {
+-                            Text(formatDuration(ch.startSeconds.toLong()), style = MaterialTheme.typography.labelLarge, color = Ember)
+-                            Spacer(Modifier.height(4.dp))
+-                            Text(
+-                                ch.title,
+-                                style = MaterialTheme.typography.bodySmall,
+-                                color = MaterialTheme.colorScheme.onSurface,
+-                                maxLines = 2,
+-                                overflow = TextOverflow.Ellipsis
+-                            )
+-                        }
+-                    }
+-                }
+-            } }
++            item(key = "chapters") { ChaptersCarousel(s, viewModel) }
+         }
+ 
+         item {
+@@ -450,12 +428,39 @@
+                 VideoCard(
+                     v,
+                     onClick = { onVideoClick(v) },
+-                    index = i,
+-                    onFeedback = { token -> viewModel.sendFeedback(v, token) }
++                    index = i
+                 )
+             }
+         }
+     }
++    androidx.compose.animation.AnimatedVisibility(
++        visible = showCompact,
++        enter = fadeIn() + slideInVertically { -it },
++        exit = fadeOut() + slideOutVertically { -it }
++    ) {
++        Row(
++            Modifier
++                .fillMaxWidth()
++                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
++                .clickable { scope.launch { listState.animateScrollToItem(0) } }
++                .padding(horizontal = 16.dp, vertical = 10.dp),
++            verticalAlignment = Alignment.CenterVertically
++        ) {
++            com.youtubly.app.presentation.components.ChannelAvatar(video, size = 28.dp)
++            Spacer(Modifier.width(10.dp))
++            Text(
++                branding?.title ?: video.title,
++                style = MaterialTheme.typography.titleSmall,
++                color = MaterialTheme.colorScheme.onSurface,
++                maxLines = 1,
++                overflow = TextOverflow.Ellipsis,
++                modifier = Modifier.weight(1f)
++            )
++            Icon(Icons.Rounded.ExpandMore, "Back to top", modifier = Modifier.rotate(180f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
++        }
++    }
++    }
++
+ }
+ 
+ private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+@@ -673,4 +678,103 @@
+             }
+         }
+     }
++}
++
++
++/** YouTube-style collapsible description: 3-line preview, "…more" / "Show less". */
++@Composable
++private fun DescriptionCard(html: String) {
++    val text = remember(html) { android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim() }
++    var open by remember(html) { mutableStateOf(false) }
++    var overflowing by remember(html) { mutableStateOf(false) }
++    Column(
++        Modifier
++            .padding(horizontal = 16.dp, vertical = 8.dp)
++            .fillMaxWidth()
++            .clip(MaterialTheme.shapes.medium)
++            .background(MaterialTheme.colorScheme.surfaceContainer)
++            .clickable { open = !open }
++            .animateContentSize(spring(stiffness = Spring.StiffnessMediumLow))
++            .padding(12.dp)
++    ) {
++        Text(
++            text,
++            style = MaterialTheme.typography.bodyMedium,
++            color = MaterialTheme.colorScheme.onSurface,
++            maxLines = if (open) Int.MAX_VALUE else 3,
++            overflow = TextOverflow.Ellipsis,
++            onTextLayout = { if (!open) overflowing = it.hasVisualOverflow }
++        )
++        if (open || overflowing) {
++            Text(
++                if (open) "Show less" else "…more",
++                style = MaterialTheme.typography.labelLarge,
++                color = MaterialTheme.colorScheme.primary,
++                modifier = Modifier.padding(top = 6.dp)
++            )
++        }
++    }
++}
++
++/** Chapter cards with preview thumbnails; the playing chapter is highlighted and kept in view. */
++@Composable
++private fun ChaptersCarousel(s: PlayerUiState.Success, viewModel: PlayerViewModel) {
++    val chapters = s.info.chapters
++    val player = viewModel.playerController.player
++    var posSec by remember { mutableStateOf(0) }
++    LaunchedEffect(player) { while (true) { posSec = (player.currentPosition / 1000).toInt(); delay(1000) } }
++    val current = chapters.indexOfLast { it.startSeconds <= posSec }.coerceAtLeast(0)
++    val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
++    LaunchedEffect(current) { rowState.animateScrollToItem((current - 1).coerceAtLeast(0)) }
++
++    Column {
++        Text(
++            "Chapters",
++            style = MaterialTheme.typography.titleMedium,
++            color = MaterialTheme.colorScheme.onSurface,
++            modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp)
++        )
++        LazyRow(
++            state = rowState,
++            contentPadding = PaddingValues(horizontal = 16.dp),
++            horizontalArrangement = Arrangement.spacedBy(10.dp)
++        ) {
++            itemsIndexed(chapters) { i, ch ->
++                val active = i == current
++                Column(
++                    Modifier
++                        .width(168.dp)
++                        .clip(MaterialTheme.shapes.medium)
++                        .background(if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
++                        .bounceClick { viewModel.seekTo(ch.startSeconds) }
++                ) {
++                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
++                        coil.compose.AsyncImage(
++                            model = ch.thumbnailUrl ?: s.info.video.thumbnailUrl,
++                            contentDescription = null,
++                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
++                            modifier = Modifier.fillMaxSize()
++                        )
++                        Text(
++                            formatDuration(ch.startSeconds.toLong()),
++                            color = Color.White,
++                            style = MaterialTheme.typography.labelSmall,
++                            modifier = Modifier.align(Alignment.BottomStart).padding(6.dp)
++                                .clip(RoundedCornerShape(4.dp)).background(Color.Black.copy(alpha = 0.7f))
++                                .padding(horizontal = 5.dp, vertical = 2.dp)
++                        )
++                    }
++                    Text(
++                        ch.title,
++                        style = MaterialTheme.typography.bodySmall,
++                        color = MaterialTheme.colorScheme.onSurface,
++                        fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
++                        maxLines = 2,
++                        overflow = TextOverflow.Ellipsis,
++                        modifier = Modifier.padding(10.dp)
++                    )
++                }
++            }
++        }
++    }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerViewModel.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerViewModel.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerViewModel.kt	2026-09-24 07:02:38.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/player/PlayerViewModel.kt	2026-09-24 13:40:20.642907455 +0000
+@@ -115,10 +115,15 @@
+         val start = if (saved > 10_000 && (durMs <= 0 || saved < durMs - 15_000)) saved else 0L
+         val speed = userPreferences.playbackSpeed.first()
+ 
+-        runCatching { playerController.play(info, PlaybackOptions(), start) }
+-            .onFailure { _events.tryEmit(it.readable()) }
+-        playerController.setSpeed(speed)
+-        if (start > 0) _events.tryEmit("Resumed at ${formatDuration(start / 1000)}")
++        // Re-opened from the in-app mini player: the singleton is already playing this exact
++        // video, so just re-attach to it instead of restarting from the saved position.
++        val alreadyPlaying = playerController.currentVideoId == id && playerController.player.mediaItemCount > 0
++        if (!alreadyPlaying) {
++            runCatching { playerController.play(info, PlaybackOptions(), start) }
++                .onFailure { _events.tryEmit(it.readable()) }
++            playerController.setSpeed(speed)
++            if (start > 0) _events.tryEmit("Resumed at ${formatDuration(start / 1000)}")
++        }
+ 
+         val signedIn = authRepository.observeAuthState().first() is AuthState.SignedIn
+         _uiState.value = PlayerUiState.Success(
+@@ -207,17 +212,14 @@
+     }
+ 
+     fun setSpeed(speed: Float) {
++        // Previously only the UI state + preference changed; the player itself was never told.
++        playerController.setSpeed(speed)
+         updateSuccess { it.copy(speed = speed) }
+         viewModelScope.launch { userPreferences.setPlaybackSpeed(speed) }
+     }
+ 
+     fun seekTo(seconds: Int) = playerController.player.seekTo(seconds * 1000L)
+ 
+-    /** Sends the feedback token and removes the video from "Up next" right away. */
+-    fun sendFeedback(video: Video, token: String) {
+-        updateSuccess { it.copy(info = it.info.copy(relatedVideos = it.info.relatedVideos.filterNot { v -> v.id == video.id })) }
+-        viewModelScope.launch { accountRepository.sendFeedback(token) }
+-    }
+ 
+     // ---------------- account actions (optimistic) ----------------
+     fun toggleLike() {
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchScreen.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchScreen.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchScreen.kt	2026-09-24 07:02:38.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchScreen.kt	2026-09-24 14:49:59.010836007 +0000
+@@ -51,6 +51,7 @@
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.remember
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.saveable.rememberSaveable
+ import androidx.compose.runtime.setValue
+@@ -104,6 +105,7 @@
+         focus.clearFocus()
+     }
+ 
++    var filters by androidx.compose.runtime.saveable.rememberSaveable(stateSaver = SearchFilters.Saver) { mutableStateOf(SearchFilters()) }
+     val showSuggestions = focused && query.isNotBlank() && suggestions.isNotEmpty()
+ 
+     Column(Modifier.fillMaxSize().statusBarsPadding()) {
+@@ -213,22 +215,14 @@
+                                         modifier = Modifier.bounceClick { viewModel.clearHistory() }
+                                     )
+                                 }
+-                                Spacer(Modifier.height(8.dp))
+-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-                                    recent.forEach { r ->
+-                                        AssistChip(
++                                Spacer(Modifier.height(4.dp))
++                                LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
++                                    items(recent, key = { it }) { r ->
++                                        RecentSearchRow(
++                                            text = r,
+                                             onClick = { submit(r) },
+-                                            label = { Text(r) },
+-                                            leadingIcon = { Icon(Icons.Rounded.History, null) },
+-                                            trailingIcon = {
+-                                                Icon(
+-                                                    Icons.Rounded.Close, "Remove from history",
+-                                                    modifier = Modifier
+-                                                        .size(16.dp)
+-                                                        .bounceClick { viewModel.removeFromHistory(r) }
+-                                                )
+-                                            },
+-                                            shape = MaterialTheme.shapes.extraLarge
++                                            onFill = { query = "$r "; viewModel.onQueryChange(query) },
++                                            onDelete = { viewModel.removeFromHistory(r) }
+                                         )
+                                     }
+                                 }
+@@ -240,13 +234,22 @@
+                         if (s.videos.isEmpty()) {
+                             EmptyState(Icons.Rounded.SearchOff, "No results", "Nothing matched \"${s.query}\".")
+                         } else {
++                            val filtered = remember(s.videos, filters) { s.videos.filter { v -> filters.matches(v) } }
+                             LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
+-                                itemsIndexed(s.videos, key = { i, v -> "${v.id}_$i" }) { i, v ->
++                                item(key = "filters") { SearchFilterBar(filters, onChange = { filters = it }) }
++                                if (filtered.isEmpty()) item(key = "nofilter") {
++                                    Text(
++                                        "No results match these filters.",
++                                        style = MaterialTheme.typography.bodyMedium,
++                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                        modifier = Modifier.padding(24.dp)
++                                    )
++                                }
++                                itemsIndexed(filtered, key = { i, v -> "${v.id}_$i" }) { i, v ->
+                                     VideoCard(
+                                         v,
+                                         onClick = { onVideoClick(v) },
+-                                        index = i,
+-                                        onFeedback = { token -> viewModel.sendFeedback(v, token) }
++                                        index = i
+                                     )
+                                 }
+                             }
+@@ -255,4 +258,149 @@
+             }
+         }
+     }
++}
++
++
++// ---------------- Recent searches (swipe to delete) ----------------
++
++@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
++@Composable
++private fun RecentSearchRow(text: String, onClick: () -> Unit, onFill: () -> Unit, onDelete: () -> Unit) {
++    val dismiss = androidx.compose.material3.rememberSwipeToDismissBoxState(
++        confirmValueChange = { v -> if (v != androidx.compose.material3.SwipeToDismissBoxValue.Settled) { onDelete(); true } else false }
++    )
++    androidx.compose.material3.SwipeToDismissBox(
++        state = dismiss,
++        backgroundContent = {
++            Row(
++                Modifier.fillMaxSize().clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.errorContainer)
++                    .padding(horizontal = 20.dp),
++                horizontalArrangement = Arrangement.SpaceBetween,
++                verticalAlignment = Alignment.CenterVertically
++            ) {
++                Icon(androidx.compose.material.icons.Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.onErrorContainer)
++                Icon(androidx.compose.material.icons.Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.onErrorContainer)
++            }
++        }
++    ) {
++        Row(
++            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).clickable(onClick = onClick)
++                .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
++            verticalAlignment = Alignment.CenterVertically
++        ) {
++            Icon(androidx.compose.material.icons.Icons.Rounded.History, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
++            Spacer(Modifier.width(16.dp))
++            Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface, maxLines = 1,
++                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
++            IconButton(onClick = onFill) { Icon(androidx.compose.material.icons.Icons.Rounded.NorthWest, "Edit search", modifier = Modifier.size(18.dp)) }
++        }
++    }
++}
++
++// ---------------- Result filters (applied on-device) ----------------
++
++enum class DurationFilter(val label: String) { ANY("Any length"), SHORT("Under 4 min"), MEDIUM("4–20 min"), LONG("Over 20 min") }
++enum class DateFilter(val label: String, val maxSeconds: Long) {
++    ANY("Any time", Long.MAX_VALUE), HOUR("Last hour", 3_600), TODAY("Today", 86_400),
++    WEEK("This week", 604_800), MONTH("This month", 2_678_400), YEAR("This year", 31_622_400)
++}
++enum class TypeFilter(val label: String) { ALL("All"), VIDEOS("Videos"), LIVE("Live") }
++
++data class SearchFilters(
++    val duration: DurationFilter = DurationFilter.ANY,
++    val date: DateFilter = DateFilter.ANY,
++    val type: TypeFilter = TypeFilter.ALL
++) {
++    val active get() = duration != DurationFilter.ANY || date != DateFilter.ANY || type != TypeFilter.ALL
++
++    fun matches(v: com.youtubly.app.domain.model.Video): Boolean {
++        when (type) {
++            TypeFilter.VIDEOS -> if (v.isLive) return false
++            TypeFilter.LIVE -> if (!v.isLive) return false
++            TypeFilter.ALL -> Unit
++        }
++        if (duration != DurationFilter.ANY) {
++            if (v.isLive || v.duration <= 0) return false
++            val ok = when (duration) {
++                DurationFilter.SHORT -> v.duration < 240
++                DurationFilter.MEDIUM -> v.duration in 240..1200
++                DurationFilter.LONG -> v.duration > 1200
++                DurationFilter.ANY -> true
++            }
++            if (!ok) return false
++        }
++        if (date != DateFilter.ANY) {
++            val age = ageSeconds(v.uploadDate) ?: return false
++            if (age > date.maxSeconds) return false
++        }
++        return true
++    }
++
++    companion object {
++        val Saver = androidx.compose.runtime.saveable.Saver<SearchFilters, List<Int>>(
++            save = { listOf(it.duration.ordinal, it.date.ordinal, it.type.ordinal) },
++            restore = { SearchFilters(DurationFilter.entries[it[0]], DateFilter.entries[it[1]], TypeFilter.entries[it[2]]) }
++        )
++
++        /** "3 days ago" / "Streamed 2 weeks ago" / ISO date → age in seconds (approximate). */
++        fun ageSeconds(raw: String?): Long? {
++            if (raw.isNullOrBlank()) return null
++            if (raw.length >= 10 && raw[4] == '-' && raw[7] == '-') {
++                val t = runCatching { java.time.OffsetDateTime.parse(raw).toInstant() }.getOrNull()
++                    ?: runCatching { java.time.LocalDate.parse(raw.substring(0, 10)).atStartOfDay(java.time.ZoneOffset.UTC).toInstant() }.getOrNull()
++                    ?: return null
++                return java.time.Duration.between(t, java.time.Instant.now()).seconds
++            }
++            val m = Regex("""(\d+)\s*(second|minute|hour|day|week|month|year)""", RegexOption.IGNORE_CASE).find(raw) ?: return null
++            val n = m.groupValues[1].toLong()
++            return n * when (m.groupValues[2].lowercase()) {
++                "second" -> 1L; "minute" -> 60L; "hour" -> 3_600L; "day" -> 86_400L
++                "week" -> 604_800L; "month" -> 2_592_000L; else -> 31_536_000L
++            }
++        }
++    }
++}
++
++@Composable
++private fun SearchFilterBar(f: SearchFilters, onChange: (SearchFilters) -> Unit) {
++    androidx.compose.foundation.lazy.LazyRow(
++        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
++        horizontalArrangement = Arrangement.spacedBy(8.dp)
++    ) {
++        if (f.active) item {
++            androidx.compose.material3.AssistChip(
++                onClick = { onChange(SearchFilters()) },
++                label = { Text("Reset") },
++                leadingIcon = { Icon(androidx.compose.material.icons.Icons.Rounded.Close, null, Modifier.size(16.dp)) },
++                shape = MaterialTheme.shapes.extraLarge
++            )
++        }
++        item { FilterMenuChip(f.type.label, f.type != TypeFilter.ALL, TypeFilter.entries.map { it.label }) { onChange(f.copy(type = TypeFilter.entries[it])) } }
++        item { FilterMenuChip(f.duration.label, f.duration != DurationFilter.ANY, DurationFilter.entries.map { it.label }) { onChange(f.copy(duration = DurationFilter.entries[it])) } }
++        item { FilterMenuChip(f.date.label, f.date != DateFilter.ANY, DateFilter.entries.map { it.label }) { onChange(f.copy(date = DateFilter.entries[it])) } }
++    }
++}
++
++@Composable
++private fun FilterMenuChip(label: String, selected: Boolean, options: List<String>, onPick: (Int) -> Unit) {
++    var open by remember { mutableStateOf(false) }
++    Box {
++        androidx.compose.material3.FilterChip(
++            selected = selected,
++            onClick = { open = true },
++            label = { Text(label) },
++            trailingIcon = { Icon(androidx.compose.material.icons.Icons.Rounded.ArrowDropDown, null, Modifier.size(18.dp)) },
++            shape = MaterialTheme.shapes.extraLarge,
++            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
++                selectedContainerColor = MaterialTheme.colorScheme.primary,
++                selectedLabelColor = Color.White,
++                selectedTrailingIconColor = Color.White
++            )
++        )
++        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
++            options.forEachIndexed { i, o ->
++                androidx.compose.material3.DropdownMenuItem(text = { Text(o) }, onClick = { open = false; onPick(i) })
++            }
++        }
++    }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchViewModel.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchViewModel.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchViewModel.kt	2026-09-24 07:02:38.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/search/SearchViewModel.kt	2026-09-24 08:08:42.996786535 +0000
+@@ -95,10 +95,4 @@
+         _uiState.value = SearchUiState.Idle
+     }
+ 
+-    /** Sends the feedback token and removes the video from the currently shown results right away. */
+-    fun sendFeedback(video: Video, token: String) {
+-        val s = _uiState.value as? SearchUiState.Success ?: return
+-        _uiState.value = s.copy(videos = s.videos.filterNot { it.id == video.id })
+-        viewModelScope.launch { accountRepository.sendFeedback(token) }
+-    }
+ }
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/theme/Theme.kt y/Youtubely/app/src/main/java/com/youtubly/app/presentation/theme/Theme.kt
+--- orig/Youtubely/app/src/main/java/com/youtubly/app/presentation/theme/Theme.kt	2026-09-24 07:02:38.000000000 +0000
++++ y/Youtubely/app/src/main/java/com/youtubly/app/presentation/theme/Theme.kt	2026-09-24 08:05:24.947487393 +0000
+@@ -13,6 +13,9 @@
+ import androidx.compose.material3.dynamicLightColorScheme
+ import androidx.compose.material3.lightColorScheme
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.ui.platform.LocalView
++import androidx.core.view.WindowCompat
+ import androidx.compose.runtime.getValue
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.unit.dp
+@@ -88,6 +91,23 @@
+         darkTheme -> DarkColors
+         else -> LightColors
+     }
++    // Status/nav bar icons must contrast with the app's own theme, not whatever the
++    // platform guessed at enableEdgeToEdge() time (some OEMs get this wrong, leaving the
++    // clock/battery icons dark-on-dark or light-on-light).
++    val view = LocalView.current
++    if (!view.isInEditMode) {
++        // Keyed on darkTheme only, so it doesn't stomp on a screen (e.g. the player)
++        // that temporarily overrides the icon colour.
++        DisposableEffect(darkTheme) {
++            (view.context as? android.app.Activity)?.window?.let { window ->
++                WindowCompat.getInsetsController(window, view).apply {
++                    isAppearanceLightStatusBars = !darkTheme
++                    isAppearanceLightNavigationBars = !darkTheme
++                }
++            }
++            onDispose { }
++        }
++    }
+     MaterialTheme(
+         colorScheme = target.animated(),
+         typography = YoutublyTypography,
+diff -ruN -x build -x .gradle -x CHANGES.md orig/Youtubely/app/src/main/res/layout/mini_player_view.xml y/Youtubely/app/src/main/res/layout/mini_player_view.xml
+--- orig/Youtubely/app/src/main/res/layout/mini_player_view.xml	1970-01-01 00:00:00.000000000 +0000
++++ y/Youtubely/app/src/main/res/layout/mini_player_view.xml	2026-09-24 12:53:20.625098223 +0000
+@@ -0,0 +1,12 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- TextureView-backed PlayerView: unlike the default SurfaceView it follows Compose
++     clipping, rounded corners, shadows and drag offsets, so the floating in-app
++     mini player actually shows the video while it's moved around. -->
++<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:app="http://schemas.android.com/apk/res-auto"
++    android:layout_width="match_parent"
++    android:layout_height="match_parent"
++    app:surface_type="texture_view"
++    app:use_controller="false"
++    app:show_buffering="when_playing"
++    app:shutter_background_color="@android:color/black" />

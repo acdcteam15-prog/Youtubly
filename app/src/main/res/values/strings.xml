@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Youtubly</string>
+    <string name="widget_label">Youtubly</string>
+    <string name="tile_label">Youtubly</string>
+    <string name="widget_description">Continue watching and play/pause</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search YouTube</string>
+    <string name="shortcut_continue_short">Continue</string>
+    <string name="shortcut_continue_long">Continue watching</string>
+    <string name="shortcut_downloads_short">Downloads</string>
+    <string name="shortcut_downloads_long">Saved downloads</string>
+    <string name="shortcut_audio_short">Audio</string>
+    <string name="shortcut_audio_long">Audio library</string>
+</resources>

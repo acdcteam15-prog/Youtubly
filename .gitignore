@@ -1,0 +1,26 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+
+# Release signing (never commit)
+keystore.properties
+*.jks
+*.keystore
+youtubly-release.apk
+
+# signing material / build outputs
+release.jks
+signing-secrets.txt
+*.b64
+/dist
+/notes.md
+/APK
+build-error.txt

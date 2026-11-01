@@ -1,0 +1,13 @@
+<resources>
+    <style name="Theme.Youtubly" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/youtubly_dark</item>
+    </style>
+
+    <style name="Theme.Youtubly.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/youtubly_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Youtubly</item>
+    </style>
+</resources>

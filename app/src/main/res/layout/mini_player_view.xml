@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TextureView-backed PlayerView: unlike the default SurfaceView it follows Compose
+     clipping, rounded corners, shadows and drag offsets, so the floating in-app
+     mini player actually shows the video while it's moved around. -->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="texture_view"
+    app:use_controller="false"
+    app:show_buffering="when_playing"
+    app:shutter_background_color="@android:color/black" />
