@@ -20,10 +20,21 @@ function Say([string]$t, [string]$c = 'Gray') { Write-Host $t -ForegroundColor $
 function Step([string]$t) { Write-Host ''; Write-Host "== $t" -ForegroundColor Cyan }
 function Ok([string]$t) { Write-Host "   OK  $t" -ForegroundColor Green }
 
+# SETUP_AUTO=1 (set by Remoty or any unattended caller): every question takes its default answer, nothing waits.
+function IsAuto { return ($env:SETUP_AUTO -eq '1') }
+
+# The question is printed as a complete line BEFORE waiting, so consoles that show output line by line
+# (Remoty's live console, some terminals) display it. A bare prompt has no line break and stays invisible.
+function Prompt([string]$text) {
+    Write-Host $text -ForegroundColor White
+    return (Read-Host '>')
+}
+
 function Ask([string]$q, [string]$default = '') {
     $suffix = ''
     if ($default) { $suffix = " [$default]" }
-    $a = Read-Host "$q$suffix"
+    if (IsAuto) { Say "   $q$suffix -> $default (automatic)"; return $default }
+    $a = Prompt "$q$suffix  (press Enter for the default)"
     if ([string]::IsNullOrWhiteSpace($a)) { return $default }
     return $a.Trim()
 }
@@ -31,7 +42,8 @@ function Ask([string]$q, [string]$default = '') {
 function YesNo([string]$q, [bool]$defaultYes = $true) {
     $hint = 'y/N'
     if ($defaultYes) { $hint = 'Y/n' }
-    $a = Read-Host "$q ($hint)"
+    if (IsAuto) { Say "   $q -> automatic default"; return $defaultYes }
+    $a = Prompt "$q ($hint)"
     if ([string]::IsNullOrWhiteSpace($a)) { return $defaultYes }
     return $a.Trim().ToLower().StartsWith('y')
 }
@@ -230,8 +242,8 @@ function Ensure-Signing([bool]$force = $false) {
         $f = (Ask '   Full path of the key file').Trim('"')
         if (-not (Test-Path $f)) { throw "File not found: $f" }
         $alias = Ask '   Key alias' 'youtubly'
-        $sp = Read-Host '   Key file password'
-        $kp = Read-Host '   Key password (Enter = same as the file password)'
+        $sp = Prompt '   Key file password'
+        $kp = Prompt '   Key password (Enter = same as the file password)'
         if ([string]::IsNullOrWhiteSpace($kp)) { $kp = $sp }
         $kt = Find-Keytool
         if ($kt) {
@@ -336,9 +348,49 @@ function Run-Release([string]$notes) {
 }
 
 # ---------------------------------------------------------------- the menu actions
+# Source files that belong to another app (a project zip unpacked over the wrong folder) break the build: they use
+# libraries and resources this app does not have. Anything outside this app's own package is moved (not deleted) to
+# setup\_other-app-files, where it can be found again.
+function Remove-ForeignSources {
+    $gradle = Join-Path $Root 'app/build.gradle.kts'
+    if (-not (Test-Path $gradle)) { return }
+    if ((Get-Content $gradle -Raw) -notmatch 'namespace\s*=\s*"([^"]+)"') { return }
+    $ns = $Matches[1]
+    $moved = 0
+    foreach ($set in @('main', 'test', 'androidTest')) {
+        $javaRoot = Join-Path $Root "app/src/$set/java"
+        if (-not (Test-Path $javaRoot)) { continue }
+        $own = $javaRoot
+        foreach ($seg in $ns.Split('.')) { $own = Join-Path $own $seg }
+        $sep = [string][IO.Path]::DirectorySeparatorChar
+        $files = @(Get-ChildItem -Path $javaRoot -Recurse -File -Include *.kt, *.java -ErrorAction SilentlyContinue |
+            Where-Object { -not $_.FullName.StartsWith($own + $sep, [StringComparison]::OrdinalIgnoreCase) })
+        if ($files.Count -eq 0) { continue }
+        Step "Files from another app found in this folder ($set sources)"
+        $files | Select-Object -First 5 | ForEach-Object { Say "     $($_.FullName.Substring($Root.Length).TrimStart('\', '/'))" 'Yellow' }
+        if ($files.Count -gt 5) { Say "     ... and $($files.Count - 5) more" 'Yellow' }
+        Say "   Only code in package '$ns' belongs to this app. The others would stop the build." 'Gray'
+        if (-not (YesNo '   Move them out of the project (kept in setup/_other-app-files)?' $true)) { continue }
+        foreach ($f in $files) {
+            $rel = $f.FullName.Substring($Root.Length).TrimStart('\', '/')
+            $dest = Join-Path (Join-Path $Root 'setup/_other-app-files') $rel
+            New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
+            Move-Item -Path $f.FullName -Destination $dest -Force
+            $moved++
+        }
+        # tidy up folders that are now empty
+        Get-ChildItem -Path $javaRoot -Recurse -Directory -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } -Descending |
+            Where-Object { -not (Get-ChildItem -Path $_.FullName -Force -ErrorAction SilentlyContinue) } |
+            ForEach-Object { Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue }
+    }
+    if ($moved -gt 0) { Ok "$moved file(s) from another app moved to setup/_other-app-files" }
+}
+
 function Do-Everything {
     Ensure-Tools
     Ensure-Login
+    Remove-ForeignSources
     Ensure-Repo
     Ensure-Signing $false
     $notes = Ask "What's new? (shown in the app's update screen)" 'First build from GitHub'
@@ -364,6 +416,7 @@ function Do-Rebuild {
 
     Say "   Working folder: $Root" 'Gray'
     & git config core.autocrlf false
+    Remove-ForeignSources
     Sync-Remote
 
     & git add -A
@@ -437,7 +490,7 @@ while ($true) {
     Write-Host '   5) Open the Releases page'
     Write-Host '   6) A build is already running - wait for it and download the APK'
     Write-Host '   0) Close'
-    $c = Read-Host '  Type a number and press Enter'
+    $c = Prompt '  Type a number and press Enter'
     switch ($c) {
         '1' { Guard { Do-Everything } }
         '2' { Guard { Do-Rebuild } }
