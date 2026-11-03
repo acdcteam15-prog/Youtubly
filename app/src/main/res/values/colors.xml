@@ -1,5 +1,4 @@
 <resources>
-    <color name="youtubly_red">#FFFF2E4D</color>
-    <color name="youtubly_violet">#FF7C4DFF</color>
-    <color name="youtubly_dark">#FF0B0B10</color>
+    <color name="bg_deep">#070B14</color>
+    <color name="accent_blue">#4F8EF7</color>
 </resources>

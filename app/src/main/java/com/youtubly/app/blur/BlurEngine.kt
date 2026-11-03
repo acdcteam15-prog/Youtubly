@@ -53,7 +53,11 @@ class BlurEngine(
                 if (!shouldProcess(channelKey, surface, s)) return@withContext BlurOutcome(src, 0, 0, 0, "skipped")
                 if (src.width < 48 || src.height < 48) return@withContext BlurOutcome(src, 0, 0, 0, "too small")
                 val (found, regions) = findRegions(src, s, maxSide = 480)
-                BlurOutcome(BlurRenderer.render(src, regions, s.mode, s.strength, scaleWithSize = s.scaleWithFaceSize), found, regions.size, SystemClock.elapsedRealtime() - t0)
+                val bodyShape = s.bodyCoverage != BodyCoverage.FACE
+                BlurOutcome(
+                    BlurRenderer.render(src, regions, s.mode, s.strength, oval = !bodyShape, rounded = bodyShape, scaleWithSize = s.scaleWithFaceSize),
+                    found, regions.size, SystemClock.elapsedRealtime() - t0
+                )
             }
         }
 
@@ -69,9 +73,17 @@ class BlurEngine(
             val faces = detector.detect(work, s.minFaceSizePct)
             val pad = s.facePaddingPct + extraPaddingPct
             val regions = faces.filter { decide(work, it, s) }.map { f ->
-                val px = f.width() * pad / 100; val py = f.height() * pad / 100
-                Rect(((f.left - px) * k).toInt(), ((f.top - py * 1.3f) * k).toInt(),     // extra top padding covers hair
-                    ((f.right + px) * k).toInt(), ((f.bottom + py) * k).toInt())
+                if (s.bodyCoverage == BodyCoverage.FACE) {
+                    val px = f.width() * pad / 100; val py = f.height() * pad / 100
+                    Rect(((f.left - px) * k).toInt(), ((f.top - py * 1.3f) * k).toInt(),     // extra top padding covers hair
+                        ((f.right + px) * k).toInt(), ((f.bottom + py) * k).toInt())
+                } else {
+                    // Whole person: estimate the body from the face, with a small margin (a quarter of the face padding,
+                    // plus a third of the extra motion padding used during playback).
+                    val grow = s.facePaddingPct / 4 + extraPaddingPct / 3
+                    val b = BlurMath.bodyBox(f.left, f.top, f.right, f.bottom, work.width, work.height, s.bodyCoverage, grow)
+                    Rect((b[0] * k).toInt(), (b[1] * k).toInt(), (b[2] * k).toInt(), (b[3] * k).toInt())
+                }
             }
             return faces.size to regions
         } finally {

@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.youtubly.app.blur.BlurMode
+import com.youtubly.app.blur.BodyCoverage
 import com.youtubly.app.blur.Normalization
 import com.youtubly.app.presentation.components.bounceClick
 import com.youtubly.app.presentation.components.popOnChange
@@ -84,6 +85,26 @@ fun BlurSettingsScreen(onBack: () -> Unit, onOpenWhitelist: () -> Unit, vm: Blur
             }
 
             item {
+                SectionCard("Cover", Icons.Rounded.Tune, Modifier.staggeredEntrance(2)) {
+                    Text(
+                        "Once a face is found, how much of the person is hidden.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        BodyCoverage.entries.forEachIndexed { i, c ->
+                            SegmentedButton(s.bodyCoverage == c, { vm.setBodyCoverage(c) }, SegmentedButtonDefaults.itemShape(i, BodyCoverage.entries.size)) {
+                                Text(when (c) { BodyCoverage.FACE -> "Face"; BodyCoverage.UPPER_BODY -> "Upper body"; BodyCoverage.FULL_BODY -> "Full body" })
+                            }
+                        }
+                    }
+                    Text(
+                        "The body is estimated from the face, so someone seen from behind (no face visible) is not covered.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            item {
                 SectionCard("Style", Icons.Rounded.BlurOn, Modifier.staggeredEntrance(2)) {
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         BlurMode.entries.forEachIndexed { i, m ->
@@ -98,7 +119,7 @@ fun BlurSettingsScreen(onBack: () -> Unit, onOpenWhitelist: () -> Unit, vm: Blur
                             SwitchRow("Scale with face size", "Big faces get stronger blur, so every face is equally hidden", s.scaleWithFaceSize, vm::setScaleWithFaceSize)
                         }
                     }
-                    LabeledSlider("Coverage around face", s.facePaddingPct.toFloat(), 0f..60f, { "${it.roundToInt()}%" }) { vm.setPadding(it.roundToInt()) }
+                    LabeledSlider("Extra margin", s.facePaddingPct.toFloat(), 0f..60f, { "${it.roundToInt()}%" }) { vm.setPadding(it.roundToInt()) }
                 }
             }
 

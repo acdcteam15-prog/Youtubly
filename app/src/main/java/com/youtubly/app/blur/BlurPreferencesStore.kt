@@ -15,6 +15,7 @@ class BlurPreferencesStore(internal val ds: DataStore<Preferences>) {
         val MODE = stringPreferencesKey("mode")
         val STRENGTH = intPreferencesKey("strength")
         val PADDING = intPreferencesKey("padding")
+        val BODY = stringPreferencesKey("body_coverage")
         val MIN_FACE = intPreferencesKey("min_face")
         val CONF = floatPreferencesKey("gender_conf")
         val THUMBS = booleanPreferencesKey("apply_thumbs")
@@ -40,6 +41,7 @@ class BlurPreferencesStore(internal val ds: DataStore<Preferences>) {
             mode = p[K.MODE]?.let { runCatching { BlurMode.valueOf(it) }.getOrNull() } ?: d.mode,
             strength = p[K.STRENGTH] ?: d.strength,
             facePaddingPct = p[K.PADDING] ?: d.facePaddingPct,
+            bodyCoverage = p[K.BODY]?.let { runCatching { BodyCoverage.valueOf(it) }.getOrNull() } ?: d.bodyCoverage,
             minFaceSizePct = p[K.MIN_FACE] ?: d.minFaceSizePct,
             genderConfidence = p[K.CONF] ?: d.genderConfidence,
             applyToThumbnails = p[K.THUMBS] ?: d.applyToThumbnails,
@@ -63,6 +65,7 @@ class BlurPreferencesStore(internal val ds: DataStore<Preferences>) {
     suspend fun setBlurUncertain(v: Boolean) = ds.edit { it[K.UNCERTAIN] = v }
     suspend fun setMode(v: BlurMode) = ds.edit { it[K.MODE] = v.name }
     suspend fun setStrength(v: Int) = ds.edit { it[K.STRENGTH] = v.coerceIn(5, 50) }
+    suspend fun setBodyCoverage(v: BodyCoverage) = ds.edit { it[K.BODY] = v.name }
     suspend fun setPadding(v: Int) = ds.edit { it[K.PADDING] = v.coerceIn(0, 60) }
     suspend fun setMinFaceSize(v: Int) = ds.edit { it[K.MIN_FACE] = v.coerceIn(2, 30) }
     suspend fun setGenderConfidence(v: Float) = ds.edit { it[K.CONF] = v.coerceIn(0.5f, 0.95f) }

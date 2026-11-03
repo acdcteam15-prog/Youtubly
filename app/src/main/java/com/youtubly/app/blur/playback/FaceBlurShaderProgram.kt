@@ -80,6 +80,7 @@ internal class FaceBlurShaderProgram(
             program.setFloatUniform("uMode", if (regions.isEmpty()) -1f else s.mode.ordinal.toFloat())
             program.setFloatUniform("uStrength", s.strength / 50f)
             program.setFloatUniform("uAspect", width.toFloat() / height)
+            program.setFloatUniform("uShape", if (s.bodyCoverage == com.youtubly.app.blur.BodyCoverage.FACE) 2f else 6f)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         } catch (e: GlUtil.GlException) {
@@ -113,6 +114,7 @@ internal class FaceBlurShaderProgram(
             program.setFloatUniform("uMode", -1f)             // passthrough copy
             program.setFloatUniform("uStrength", 0f)
             program.setFloatUniform("uAspect", 1f)
+            program.setFloatUniform("uShape", 2f)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
@@ -188,13 +190,14 @@ internal class FaceBlurShaderProgram(
             uniform float uMode;      // -1 passthrough, 0 blur, 1 pixelate, 2 solid
             uniform float uStrength;  // 0..1
             uniform float uAspect;    // width / height
+            uniform float uShape;     // 2 = ellipse (face), 6 = rounded rectangle (body)
             varying vec2 vTexCoords;
 
             float cover(vec4 r, vec2 p) {
               if (r.z <= 0.0) return 0.0;
-              vec2 d = (p - r.xy) / r.zw;
-              float e = dot(d, d);
-              return 1.0 - smoothstep(0.80, 1.0, e);       // feathered ellipse edge
+              vec2 d = abs((p - r.xy) / r.zw);
+              float e = pow(d.x, uShape) + pow(d.y, uShape);
+              return 1.0 - smoothstep(0.80, 1.0, e);       // feathered edge
             }
 
             vec4 blurAt(vec2 p) {

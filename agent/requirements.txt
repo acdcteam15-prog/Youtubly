@@ -1,0 +1,5 @@
+fastapi>=0.115
+uvicorn>=0.30
+mss>=9.0
+pillow>=10.0
+pystray>=0.19

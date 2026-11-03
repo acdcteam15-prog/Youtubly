@@ -57,6 +57,7 @@ class BlurSettingsViewModel @Inject constructor(
     fun setMode(v: BlurMode) = go { setMode(v) }
     fun setStrength(v: Int) = go { setStrength(v) }
     fun setPadding(v: Int) = go { setPadding(v) }
+    fun setBodyCoverage(v: com.youtubly.app.blur.BodyCoverage) = go { setBodyCoverage(v) }
     fun setMinFaceSize(v: Int) = go { setMinFaceSize(v) }
     fun setGenderConfidence(v: Float) = go { setGenderConfidence(v) }
     fun setApplyToThumbnails(v: Boolean) = go { setApplyToThumbnails(v) }

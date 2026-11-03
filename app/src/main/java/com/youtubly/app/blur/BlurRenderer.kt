@@ -5,7 +5,7 @@ import android.graphics.*
 /** Real region blur (the old BlurMaskFilter approach only softened a drawn rect, not the image). */
 object BlurRenderer {
 
-    fun render(src: Bitmap, regions: List<Rect>, mode: BlurMode, strength: Int, oval: Boolean = true, scaleWithSize: Boolean = false): Bitmap {
+    fun render(src: Bitmap, regions: List<Rect>, mode: BlurMode, strength: Int, oval: Boolean = true, scaleWithSize: Boolean = false, rounded: Boolean = false): Bitmap {
         if (regions.isEmpty()) return src
         val out = src.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
@@ -16,8 +16,11 @@ object BlurRenderer {
 
         for (r0 in regions) {
             val r = Rect(r0); if (!r.intersect(bounds) || r.width() < 4 || r.height() < 4) continue
-            val ovalPath = Path().apply { addOval(RectF(r), Path.Direction.CW) }
-            canvas.save(); if (oval) canvas.clipPath(ovalPath)
+            val shapePath = Path().apply {
+                if (rounded) { val rad = minOf(r.width(), r.height()) * 0.18f; addRoundRect(RectF(r), rad, rad, Path.Direction.CW) }
+                else addOval(RectF(r), Path.Direction.CW)
+            }
+            canvas.save(); if (oval || rounded) canvas.clipPath(shapePath)
             when (mode) {
                 BlurMode.SOLID -> canvas.drawRect(r, solid)
                 BlurMode.GAUSSIAN -> {
