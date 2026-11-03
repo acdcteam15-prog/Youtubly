@@ -70,6 +70,8 @@ import androidx.compose.material.icons.rounded.DataSaverOn
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -678,7 +680,6 @@ private fun PlayerDetails(
 }
 
 private val BOOSTS = com.youtubly.app.playback.VolumeBoost.LEVELS_DB
-private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 private val TRANSLATE_TO = listOf("en" to "English", "ar" to "Arabic")
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -733,6 +734,44 @@ private fun PlaybackSettingsSheet(s: PlayerUiState.Success, viewModel: PlayerVie
                 SettingChip(if (autoplay) "Autoplay next: on" else "Autoplay next: off", autoplay) { viewModel.setAutoplayNext(!autoplay) }
             }
 
+            SheetSection("Speed")
+            // Slider: 0.25x to 3x in steps of 0.05. Live while dragging, saved when you let go; -/+ for fine steps.
+            run {
+                val snap = { v: Float -> (Math.round(v * 20f) / 20f).coerceIn(0.25f, 3f) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { viewModel.setSpeed(snap(s.speed - 0.05f)) }) { Icon(Icons.Rounded.Remove, "Slower") }
+                    androidx.compose.material3.Slider(
+                        value = s.speed.coerceIn(0.25f, 3f),
+                        onValueChange = { viewModel.previewSpeed(snap(it)) },
+                        onValueChangeFinished = { viewModel.setSpeed(s.speed) },
+                        valueRange = 0.25f..3f,
+                        steps = 54,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { viewModel.setSpeed(snap(s.speed + 0.05f)) }) { Icon(Icons.Rounded.Add, "Faster") }
+                }
+                Text(
+                    // Tap the value to go back to normal speed.
+                    formatSpeed(s.speed),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.align(Alignment.CenterHorizontally).clickable { viewModel.setSpeed(1f) }.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingChip(
+                    if (s.videoSpeedRemembered) "Remembered for this video" else "Remember for this video",
+                    s.videoSpeedRemembered
+                ) { viewModel.rememberSpeedForVideo() }
+                if (s.videoSpeedRemembered) SettingChip("Reset video", false) { viewModel.resetVideoSpeed() }
+                SettingChip(
+                    if (s.channelSpeedRemembered) "Remembered for this channel" else "Remember for this channel",
+                    s.channelSpeedRemembered
+                ) { viewModel.rememberSpeedForChannel() }
+                if (s.channelSpeedRemembered) SettingChip("Reset", false) { viewModel.resetChannelSpeed() }
+            }
+
+
             SheetSection("Sleep timer")
             val sleep by viewModel.sleepTimer.state.collectAsStateWithLifecycle()
             val running = sleep as? com.youtubly.app.playback.SleepTimer.State.Running
@@ -770,25 +809,6 @@ private fun PlaybackSettingsSheet(s: PlayerUiState.Success, viewModel: PlayerVie
                 com.youtubly.app.domain.audio.EqPreset.entries.forEach { p ->
                     SettingChip(p.label, eq == p) { controller.setEqPreset(p) }
                 }
-            }
-
-            SheetSection("Speed")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SPEEDS.forEach { sp ->
-                    SettingChip(if (sp == 1f) "Normal" else "${sp}×", s.speed == sp) { viewModel.setSpeed(sp) }
-                }
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingChip(
-                    if (s.videoSpeedRemembered) "Remembered for this video" else "Remember for this video",
-                    s.videoSpeedRemembered
-                ) { viewModel.rememberSpeedForVideo() }
-                if (s.videoSpeedRemembered) SettingChip("Reset video", false) { viewModel.resetVideoSpeed() }
-                SettingChip(
-                    if (s.channelSpeedRemembered) "Remembered for this channel" else "Remember for this channel",
-                    s.channelSpeedRemembered
-                ) { viewModel.rememberSpeedForChannel() }
-                if (s.channelSpeedRemembered) SettingChip("Reset", false) { viewModel.resetChannelSpeed() }
             }
 
             SheetSection("A–B loop")

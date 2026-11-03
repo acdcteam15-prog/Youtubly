@@ -232,11 +232,12 @@ fun YoutublyNavHost(
                         ProvideNavScope {
                             androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
                                 com.youtubly.app.presentation.update.UpdateBanner(onOpen = { nav.navigate(Screen.Updates.route) })
-                                com.youtubly.app.presentation.home.ResumeQueueBanner(onResume = { url, ms -> playerSheet.open(url, ms) })
                                 androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
                                     HomeScreen(
                                         onVideoClick = { playerSheet.open(it.url) },
-                                        onOpenGroup = { g -> nav.navigate(Screen.ChannelGroup.createRoute(g)) }
+                                        onOpenGroup = { g -> nav.navigate(Screen.ChannelGroup.createRoute(g)) },
+                                        onResumeQueue = { url, ms -> playerSheet.open(url, ms) },
+                                        playerActive = playerSheet.request != null
                                     )
                                 }
                             }

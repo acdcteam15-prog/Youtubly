@@ -368,6 +368,12 @@ class PlayerViewModel @Inject constructor(
         updateSuccess { it.copy(options = opts) }
     }
 
+    /** While the speed slider is being dragged: change the speed live, but don't write settings on every tick. */
+    fun previewSpeed(speed: Float) {
+        playerController.setSpeed(speed)
+        updateSuccess { it.copy(speed = speed) }
+    }
+
     fun setSpeed(speed: Float) {
         val s = success()
         playerController.setSpeed(speed)

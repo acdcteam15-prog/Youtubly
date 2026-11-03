@@ -36,6 +36,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -64,8 +66,14 @@ fun HomeScreen(
     onVideoClick: (Video) -> Unit,
     /** Opens a channel group's merged feed (the group chips next to Home / Subscriptions). */
     onOpenGroup: (String) -> Unit = {},
+    /** Continue a queue you left mid-way (shown as one small chip, only when no player is loaded). */
+    onResumeQueue: (url: String, startMs: Long) -> Unit = { _, _ -> },
+    /** A video is already loaded in the player (mini-player visible): the Continue chip would only repeat it. */
+    playerActive: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
+    val resumeVm: ResumeQueueViewModel = hiltViewModel()
+    val pendingQueue by resumeVm.pending.collectAsStateWithLifecycle()
     val groupsVm: com.youtubly.app.presentation.library.ChannelGroupsViewModel = hiltViewModel()
     val groups by groupsVm.groups.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -102,6 +110,25 @@ fun HomeScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // One quiet chip instead of a card on top: tap to continue, x to forget it.
+                val saved = pendingQueue
+                if (saved != null && !playerActive) {
+                    item(key = "resume_queue") {
+                        androidx.compose.material3.InputChip(
+                            selected = false,
+                            onClick = { resumeVm.resume()?.let { (url, ms) -> onResumeQueue(url, ms) } },
+                            label = { Text("Continue ${saved.index + 1}/${saved.items.size}") },
+                            leadingIcon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)) },
+                            trailingIcon = {
+                                androidx.compose.material3.Icon(
+                                    androidx.compose.material.icons.Icons.Rounded.Close, "Forget this queue",
+                                    Modifier.size(18.dp).clickable { resumeVm.dismiss() }
+                                )
+                            },
+                            shape = MaterialTheme.shapes.extraLarge
+                        )
+                    }
+                }
                 items(feeds, key = { it.label }) { f ->
                     FilterChip(
                         selected = feed == f,
