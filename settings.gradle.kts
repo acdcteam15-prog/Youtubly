@@ -10,7 +10,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // NewPipeExtractor is only published on JitPack.
+        maven { url = uri("https://jitpack.io") }
     }
 }
-rootProject.name = "Remoty"
+rootProject.name = "Youtubly"
 include(":app")

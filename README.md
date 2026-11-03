@@ -1,65 +1,75 @@
-# Remoty
+# Youtubly v4
 
-Do on your phone what you do at your Windows PC when Claude gives you a project zip:
-send the zip, unzip it over the project folder, run the project's own script (for example `Rebuild-APK.bat`), answer its
-questions live, and get the finished APK installed on the phone.
+Personal-use, sideloaded YouTube client: your real YouTube Home without ads or Shorts.
 
-```
-phone (Remoty app, ZeroTier inside)  <== encrypted ZeroTier ==>  laptop (Remoty Agent: unzip, run your .bat, return the APK)
-```
+## Build & install (no Android Studio needed)
+Double-click **START-HERE.bat** and choose 1 - it installs what it needs, builds the app on GitHub and downloads the APK.
+Later: **Rebuild-APK.bat**, or *Settings > App updates* on the phone. Details: **[SETUP.md](SETUP.md)**.
 
-ZeroTier runs **inside the app** (libzt): no ZeroTier app on the phone, no VPN slot used. The phone joins your network as its own
-device; authorise it once in my.zerotier.com.
+> Play Protect may still show its own "unknown app" prompt for any sideloaded APK: tap **More details > Install anyway**.
+> Content blur needs nothing to download: five gender models are packed inside the app.
 
-## 1. Laptop (once)
-1. ZeroTier One on the laptop, joined to your network and authorised.
-2. In `agent\` double-click `build-exe.bat` (needs Python 3.12 once, only to build). It makes `RemotyAgent.exe`.
-3. Double-click `RemotyAgent.exe`. The window shows the ZeroTier address and pairing token. Tick **Start with Windows**, click **Run in background**.
-4. Your project folders must be under the folder shown in the window (default `C:\Users\<you>\RemotyApps`; add more in `config.json` "roots").
-   Move or clone your projects (for example FamilySafeTube) there.
+## Sign in
+You tab → **Sign in to YouTube** → normal Google sign-in page inside the app.
+No Google Cloud project is needed anymore; the old OAuth setup can be deleted.
+The session stays in app-private storage only (backups disabled). Sign out wipes it.
 
-## 2. Phone app: double-click `Rebuild-APK.bat`
-First time it installs Git and the GitHub helper, you sign in to GitHub once in the browser, and it creates a private repository.
-Then it uploads the project, builds on GitHub (first build 20-30 min, later ~10), and puts `Remoty-buildN.apk` in the `APK` folder.
-Copy that APK to the phone once. After that you can update Remoty itself the same way as your other apps: share the new zip to Remoty,
-it runs `Rebuild-APK.bat` on the laptop and installs the APK on the phone.
-If the build fails, `build-error.txt` opens: send it to Claude. (Optional: signing secrets + the **Release** workflow for in-app updates.)
+## What's in v3
+- **Your YouTube Home** (signed in) + Subscriptions, infinite scroll, **no Shorts anywhere**
+- **Like / Subscribe / Watch later**, synced to your account
+- **Picture-in-picture** when you leave the app mid-video (toggle in You → Settings)
+- **Player settings** (gear icon): quality up to 4K, speed, captions + auto-translate
+- **Chapters**: list under the video + markers on the seek bar
+- **Resume where you left off** + red progress bars on thumbnails
+- **DeArrow**: community titles/thumbnails instead of clickbait (tap title for original)
+- You tab: profile, Watch later, Liked, Recently watched, Subscriptions
 
-## Updating Remoty itself
-Every build is signed with the same key (`signing/remoty-debug.keystore`), so a new APK installs over the old one.
-Laptop tab > **Check for updates** asks the laptop for the newest `Remoty-buildN.apk` (made by `Rebuild-APK.bat`) and installs it;
-the app also checks by itself when it connects. The key is a convenience key kept in your private repository: if you want a
-secret one, use the **Release** workflow with the four signing secrets instead.
+## Debugging
+Logcat filters: `tag:Youtubly` (data), `tag:YoutublyInnertube` (account API),
+`tag:YoutublyPlayer` (playback), `tag:YoutublyDeArrow`.
 
-## 3. Every update
-1. Build tab: choose the project folder (once; it is remembered), pick the zip (file picker, or Share > Remoty from your chat app/browser).
-2. **Send the zip and check it**: the laptop says how many files will be replaced/new and which scripts it found
-   (`Rebuild-APK.bat` is preselected, else `START-HERE.bat`). Tap **Run**.
-3. The console is live. When the script asks something ("what changed?") type the answer in the box at the bottom.
-   "Press any key to continue" is answered automatically.
-4. When the script ends and an APK appeared, the phone downloads it and opens the installer. **Roll back** puts the replaced files back.
+## v4 changes
+- **Downloads, like, PiP and background playback fixes** — see below.
+- **Background/lock-screen playback fixed**: the MediaController that keeps the app's
+  player service alive was being garbage-collected right after backgrounding, which
+  silently killed playback within seconds of leaving the app or locking the screen.
+  It's now held for the app's lifetime.
+- **Picture-in-picture is now more reliable**: added a manual PiP button (top-right on
+  the video, when not in audio-only mode) as a guaranteed trigger, since `onUserLeaveHint`
+  doesn't fire on every launcher/gesture-nav setup. Backgrounding the app while a video
+  plays now also tries PiP from `onStop` as a second automatic path.
+- **Keep screen on**: the screen no longer dims/locks while a video is actively playing,
+  and stops holding it awake the instant playback pauses.
+- **"Not interested" / "Don't recommend channel"**: on Home and Subscriptions, tap the
+  ⋮ menu on a video card (when YouTube offers it) to remove it — the video disappears
+  from the feed immediately and the feedback is sent to your account.
 
-## More tools (Laptop tab)
-- **Smart error panel**: a failed job shows the real errors (file and line) at the top; **Copy for Claude** copies them with the log.
-- **Diagnostics**: one tap copies versions, connection state, recent app log and any crash (never the token).
-- **Live progress notification** while the app is in the background, with Stop; an "APK ready" notification with an Install button.
-- **Keep the laptop awake** while a job runs (Windows will not sleep mid-build).
-- **Remote screen**: see the laptop and click, drag, scroll and type. Off by default: tick "Allow remote control" in the agent window.
-- **Activity log**: every action the phone took (also in `data\audit.log` next to the agent; the agent window has an Activity log button).
-- **Build on GitHub (laptop off)**: needs a fine-grained GitHub token (Contents + Actions, read and write). The phone commits the zip's files to
-  your repository, runs its workflow (`build.yml`, `workflow_dispatch`), and installs the APK it produces. Works from the first screen, before connecting.
+## v5 changes
+- **Diagnostics** (You → System → Diagnostics): last 50 errors and crashes, kept across restarts, with a
+  "copy report" button. Every failed request and final playback failure is recorded automatically.
+- **Clear extractor errors**: "Playback source is outdated", "video unavailable", "age-restricted",
+  "region-blocked" and "bot check" messages instead of generic failures. To update NewPipe, change
+  `newPipeVersion` at the top of `app/build.gradle.kts` (the only place).
+- **Content blur**: blurred thumbnails cached on disk (100 MB); "Don't blur this video" in the long-press
+  menu (thumbnails + playback); "Scale with face size" so big faces get stronger blur; model SHA-256 with
+  a copy button (paste it into `GENDER_MODEL_SHA256`).
+- **Editor**: remembers your last resolution/bitrate; "Extract audio (.m4a)" keeps your trim and cuts;
+  two-pane layout on tablets / landscape.
+- **Playback**: sleep timer (15–90 min or end of video) with a 30 s fade, in the player's settings sheet;
+  an interrupted playlist queue is offered back on Home; SponsorBlock categories are selectable
+  (You → Settings → SponsorBlock categories), with "Filler" added and off by default.
+- **System**: Storage screen (sizes; clear caches only), Backup & restore of all settings to a JSON file.
+- **Polish**: illustrated empty states, skeleton while the model download connects, haptics on trim
+  handles and blur switches, and the animated background/shimmer now respect "Remove animations".
 
-## Limits (be aware)
-- Scripts run with piped input, not a real console. Normal questions (`Read-Host`, `pause`) work. Hidden-typing prompts
-  (`Read-Host -AsSecureString`, e.g. pasting the Drive key in the first-time wizard) cannot: do the first-time setup (menu 1/4) once at the PC.
-- Success = exit code 0 and no new `build-error.txt`. If the script fails, its `build-error.txt` is shown in the log and in the error report.
-- A zip is unzipped over the folder: files in the zip replace the old ones, files not in the zip stay. `.git` inside a zip is ignored.
-- Scripts can do anything on the laptop: only run zips you trust. The agent runs only scripts inside the project folder, only .bat/.cmd/.ps1.
+## v5.1
+- **Model source box** (first-run screen and Content blur): type a Hugging Face repo, no rebuild needed.
+  Clear errors for a missing repo, private repo, web page, or a non-TFLite file (e.g. `.pt`).
+- `tools/make_gender_tflite.py`: converts the best open gender model to `gender.tflite`.
+- **Mini player no longer hides content**: every list reserves space for the player bar while a video is loaded.
 
-## Security
-- Listens on the ZeroTier address only, needs the pairing token, locks out after 5 wrong tries.
-- Only touches folders listed in `roots`; zip entries with `..` or absolute paths are rejected.
-- The token is stored encrypted with the Android Keystore. Optional fingerprint/PIN lock for the app.
-- The preview relay (used only when a script prints a localhost web address) is not token-protected: anyone you authorised on your ZeroTier network could open it.
-- libzt is BSL 1.1 licensed (free for personal/internal/non-commercial use).
-- Nothing in the Android app has been compiled by the author: the first CI run is the real test. Send the log if it fails.
+## v5.2
+- **Five built-in gender models** (`app/src/main/assets/models/`, catalog in `blur/BundledModels.kt`): pick one in
+  Content blur → Gender model, and the preview re-runs so you can compare. Each model carries its own male/female
+  output and pixel-scaling settings, so switching can't swap the genders. A "Swap male / female" switch is there if a
+  model ever reads backwards. Custom files and the Hugging Face import still work under **Detection & custom model**.

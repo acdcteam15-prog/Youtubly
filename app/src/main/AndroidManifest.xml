@@ -1,60 +1,153 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets the app hand its own downloaded update to Android's installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Cleartext is only allowed to 127.0.0.1 (see network_security_config): the app talks to a local
-         forwarder that tunnels everything, end-to-end encrypted, through the embedded ZeroTier node. -->
     <application
-        android:name=".RemotyApp"
+        android:name=".YoutublyApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
-        android:networkSecurityConfig="@xml/network_security_config"
-        android:supportsRtl="true"
-        android:theme="@style/Theme.Remoty">
+        android:theme="@style/Theme.Youtubly"
+        android:enableOnBackInvokedCallback="true"
+        tools:targetApi="34">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:theme="@style/Theme.Youtubly.Starting"
             android:launchMode="singleTop"
-            android:windowSoftInputMode="adjustResize"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden">
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Share > Remoty from a chat app or browser -->
+
+            <!--
+              YouTube links from browsers / chat apps. Android 12+ only opens unverified web
+              links in an app once the user enables them (You → Settings → "Open YouTube links");
+              until then they appear in the "Open with" chooser / share sheet.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="www.youtube.com" />
+                <data android:host="youtube.com" />
+                <data android:host="m.youtube.com" />
+                <data android:pathPrefix="/watch" />
+                <data android:pathPrefix="/playlist" />
+                <data android:pathPrefix="/shorts/" />
+                <data android:pathPrefix="/live/" />
+                <data android:pathPrefix="/embed/" />
+                <data android:pathPrefix="/channel/" />
+                <data android:pathPrefix="/c/" />
+                <data android:pathPrefix="/user/" />
+                <data android:pathPrefix="/@" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="youtu.be" />
+            </intent-filter>
+            <!-- "Share → Youtubly" from any app (text containing a YouTube link). -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/zip" />
-                <data android:mimeType="application/x-zip-compressed" />
-                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- "Share → Youtubly" with a video file: opens it in the Edit tab. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+            <!-- Long-press app icon shortcuts: Search, Continue watching, Downloads, Audio. -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
 
+        <!-- Home-screen widget: Continue watching + now-playing controls (Glance). -->
+        <receiver
+            android:name=".widget.YoutublyWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/youtubly_widget_info" />
+        </receiver>
+
+        <!-- Home-screen widget: your playlists. -->
+        <receiver
+            android:name=".widget.PlaylistsWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_playlists_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/playlists_widget_info" />
+        </receiver>
+
+        <!-- Quick Settings tile: play/pause what's loaded, else open "Continue watching". -->
         <service
-            android:name=".RemotyService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps the embedded ZeroTier connection to the user's own laptop alive while builds run" />
+            android:name=".widget.YoutublyTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_play"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.ACTIVE_TILE" android:value="true" />
         </service>
 
+        <!-- Watch / headset / car media keys: wakes the playback service even when it isn't running. -->
         <receiver
-            android:name=".NotifActionReceiver"
-            android:exported="false" />
+            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <receiver android:name=".update.UpdateInstallReceiver" android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -64,6 +157,25 @@
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
+        </provider>
+
+        <!--
+          Disable WorkManager's default initializer. Without this, androidx.startup runs
+          WorkManager.initialize() with the default WorkerFactory before Application.onCreate(),
+          which cannot construct @HiltWorker classes like DownloadWorker (they require
+          Hilt-injected dependencies in their constructor, not just Context/WorkerParameters).
+          This forces WorkManager to instead pick up YoutublyApplication's
+          Configuration.Provider, which supplies HiltWorkerFactory.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
         </provider>
     </application>
 </manifest>

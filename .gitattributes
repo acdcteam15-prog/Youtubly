@@ -5,6 +5,4 @@ gradlew text eol=lf
 *.ps1 text eol=crlf
 *.jks binary
 *.jar binary
-*.ogg binary
-*.png binary
-*.jpg binary
+*.tflite binary

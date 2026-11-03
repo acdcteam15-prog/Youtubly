@@ -1,22 +1,26 @@
 *.iml
-.gradle/
-build/
-local.properties
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+
+# Release signing (never commit)
 keystore.properties
 *.jks
-.idea/
-app/libs/*.aar
-captures/
-APK/
+*.keystore
+youtubly-release.apk
+
+# signing material / build outputs
+release.jks
+signing-secrets.txt
+*.b64
+/dist
+/notes.md
+/APK
 build-error.txt
-# agent: the config holds your pairing token, never upload it
-agent/config.json
-agent/data/
-agent/.venv/
-agent/.buildvenv/
-agent/build/
-agent/dist/
-agent/*.exe
-agent/*.spec
-agent/remoty.ico
-__pycache__/

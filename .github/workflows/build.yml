@@ -1,7 +1,12 @@
-# Builds the debug APK when Rebuild-APK.bat asks for it. Nothing is published; the APK is attached to the run (Artifacts).
+# Builds and tests on every push / pull request. Nothing is published; the APK is attached to the run.
 name: Build
+
 on:
-  workflow_dispatch:   # started by Rebuild-APK.bat (or the "Run workflow" button on GitHub)
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: build-${{ github.ref }}
@@ -11,37 +16,28 @@ permissions:
   contents: read
 
 jobs:
-  libzt:
-    uses: ./.github/workflows/libzt.yml
-
-  app:
-    needs: libzt
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/download-artifact@v5
-        with:
-          name: libzt-aar
-          path: app/libs
-
-      - name: Where did the ZeroTier library land?
-        run: |
-          find . -name '*.aar' -not -path './.git/*' -print
-          test -n "$(find . -name 'libzt-release.aar' -not -path './.git/*')" || { echo "::error::libzt-release.aar was not downloaded"; exit 1; }
 
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3   # accepts the licences; Gradle downloads the SDK platform it needs
         with:
           packages: platform-tools
 
-      - run: chmod +x gradlew
-      - uses: gradle/actions/setup-gradle@v5
+      - name: Make the Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - uses: gradle/actions/setup-gradle@v5   # also validates gradle-wrapper.jar
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
 
       - name: Build debug APK
         env:
@@ -50,13 +46,15 @@ jobs:
 
       - uses: actions/upload-artifact@v5
         with:
-          name: remoty-debug-apk
+          name: youtubly-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          retention-days: 14
+          retention-days: 7
 
       - uses: actions/upload-artifact@v5
         if: failure()
         with:
           name: build-reports
-          path: app/build/reports/
+          path: |
+            app/build/reports/
+            app/build/test-results/
           retention-days: 7

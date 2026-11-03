@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <cache-path name="apks" path="apks/" />
+    <external-files-path name="downloads" path="Youtubly/" />
+    <!-- Downloaded app updates (UpdateRepository). -->
+    <cache-path name="updates" path="updates/" />
 </paths>
