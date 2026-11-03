@@ -53,7 +53,7 @@ jobs:
           ./gradlew --no-daemon --stacktrace assembleRelease
           cp app/build/outputs/aar/libzt-release.aar "$GITHUB_WORKSPACE/libzt-release.aar"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: libzt-aar
           path: libzt-release.aar
