@@ -62,7 +62,9 @@ sealed interface PlayerUiState {
         /** A per-channel speed is stored for this video's channel. */
         val channelSpeedRemembered: Boolean = false,
         /** A speed is stored for this exact video (beats the channel and global speeds). */
-        val videoSpeedRemembered: Boolean = false
+        val videoSpeedRemembered: Boolean = false,
+        /** Saved per-channel choices for this video's channel (audio only, quality, captions, skip intro). */
+        val channelDefaults: com.youtubly.app.domain.playback.ChannelDefaults? = null
     ) : PlayerUiState {
         val audioOnly: Boolean get() = audioMode
     }
@@ -224,15 +226,23 @@ class PlayerViewModel @Inject constructor(
         val durMs = info.video.duration * 1000
         val linkStart = requestedStartMs?.takeIf { durMs <= 0 || it < durMs }
         requestedStartMs = null
-        val start = linkStart ?: if (saved > 10_000 && (durMs <= 0 || saved < durMs - 15_000)) saved else 0L
+        val resumeAt = linkStart ?: if (saved > 10_000 && (durMs <= 0 || saved < durMs - 15_000)) saved else 0L
+        // This channel's saved choices (audio only, quality, captions, skip intro).
+        val channelDefaults = com.youtubly.app.domain.playback.ChannelDefaults.lookup(userPreferences.channelDefaults.first(), info.video.uploaderUrl)
+        val start = com.youtubly.app.domain.playback.ChannelDefaults.startPosition(linkStart, resumeAt, durMs, channelDefaults?.skipIntroSec ?: 0)
         // Per-channel speed wins over the global one.
-        val channelSpeed = info.video.uploaderUrl?.let { userPreferences.channelSpeeds.first()[it] }
+        val channelSpeed = com.youtubly.app.domain.playback.ChannelDefaults.lookup(userPreferences.channelSpeeds.first(), info.video.uploaderUrl)
         val videoSpeed = userPreferences.videoSpeeds.first()[id]
         var speed = com.youtubly.app.domain.playback.pickSpeed(videoSpeed, channelSpeed, userPreferences.playbackSpeed.first())
         // Quality cap / data saver are decided once per video from the network right now, so
         // a Wi-Fi ↔ mobile switch mid-video only affects the next one.
         val policy = networkPolicy.forNewVideo()
-        var options = PlaybackOptions(maxHeight = policy.maxHeight, audioOnly = policy.startAudioOnly)
+        var options = PlaybackOptions(
+            maxHeight = policy.maxHeight,
+            audioOnly = channelDefaults?.audioOnly ?: policy.startAudioOnly,
+            qualityHeight = channelDefaults?.qualityHeight,
+            caption = channelDefaults?.captionLang?.takeIf { it != "off" }?.let { tag -> info.captions.firstOrNull { it.languageTag == tag } }
+        )
 
         // Re-opened from the in-app mini player: the singleton is already playing this exact
         // video, so just re-attach to it instead of restarting from the saved position.
@@ -246,7 +256,11 @@ class PlayerViewModel @Inject constructor(
             runCatching { playerController.play(info, options, start) }
                 .onFailure { _events.tryEmit(it.readable()) }
             playerController.setSpeed(speed)
+            // This channel's own sound (volume boost / preset), or back to the user's own choice.
+            playerController.applyChannelSound(channelDefaults?.volumeBoostDb, channelDefaults?.soundPreset)
             when {
+                channelDefaults != null && channelDefaults.skipIntroSec > 0 && start == channelDefaults.skipIntroSec * 1000L && resumeAt < start ->
+                    _events.tryEmit("Skipped the intro (${channelDefaults.skipIntroSec} s)")
                 start > 0 -> _events.tryEmit("Resumed at ${formatDuration(start / 1000)}")
                 videoSpeed != null && videoSpeed != 1f -> _events.tryEmit("${formatSpeed(videoSpeed)} speed for this video")
                 channelSpeed != null && channelSpeed != 1f -> _events.tryEmit("${formatSpeed(channelSpeed)} speed for this channel")
@@ -260,9 +274,11 @@ class PlayerViewModel @Inject constructor(
             audioMode = playerController.isAudioMode,
             dataSaver = if (alreadyPlaying) networkPolicy.dataSaverActive.value else policy.dataSaver,
             channelSpeedRemembered = channelSpeed != null,
-            videoSpeedRemembered = videoSpeed != null
+            videoSpeedRemembered = videoSpeed != null,
+            channelDefaults = channelDefaults
         )
         startSavingPosition(id)
+        startOutroSkip(id, channelDefaults?.skipOutroSec ?: 0)
 
         viewModelScope.launch {
             val dislikes = async { getDislikeCount(id).getOrNull() }
@@ -276,6 +292,27 @@ class PlayerViewModel @Inject constructor(
             val dislikeCount = dislikes.await()
             val accountState = account.await()
             updateSuccess { it.copy(dislikeCount = dislikeCount, segments = segs, account = accountState) }
+        }
+    }
+
+    // ---------------- skip outro ----------------
+    private var outroJob: Job? = null
+
+    /** Jumps to the end once only the last [seconds] seconds remain (an outro / "subscribe" card). Skipped for short videos. */
+    private fun startOutroSkip(videoId: String, seconds: Int) {
+        outroJob?.cancel()
+        if (seconds <= 0) return
+        outroJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(500)
+                val p = playerController.player
+                if (playerController.currentVideoId != videoId) return@launch
+                val dur = p.duration
+                if (dur > seconds * 1000L + 30_000L && p.isPlaying && p.currentPosition >= dur - seconds * 1000L) {
+                    p.seekTo(dur)          // the end: the next item starts, or playback finishes
+                    return@launch
+                }
+            }
         }
     }
 
@@ -389,6 +426,48 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    // ---------------- per-channel defaults ----------------
+    /** Remembers today's choices (audio only, quality, captions) for every video of this channel. */
+    fun saveChannelDefaults() {
+        val s = success() ?: return
+        val previous = s.channelDefaults
+        // Only the three things this button is about change; everything else saved for the channel is kept.
+        val d = (previous ?: com.youtubly.app.domain.playback.ChannelDefaults()).copy(
+            audioOnly = s.audioMode || s.options.audioOnly,
+            qualityHeight = s.options.qualityHeight,
+            captionLang = if (s.info.captions.isEmpty()) previous?.captionLang else (s.options.caption?.languageTag ?: "off")
+        )
+        storeChannelDefaults(s, d, "Saved for this channel")
+    }
+
+    fun setSkipIntro(seconds: Int) {
+        val s = success() ?: return
+        val base = s.channelDefaults ?: com.youtubly.app.domain.playback.ChannelDefaults()
+        storeChannelDefaults(s, base.copy(skipIntroSec = seconds.coerceIn(0, 600)), null)
+    }
+
+    /** "The intro ends here": the current position becomes this channel's skip-intro time. */
+    fun skipIntroToHere() {
+        val sec = (playerController.player.currentPosition / 1000).toInt()
+        setSkipIntro(sec)
+        _events.tryEmit("Videos of this channel now start at ${formatDuration(sec.toLong())}")
+    }
+
+    fun clearChannelDefaults() {
+        val s = success() ?: return
+        val url = s.info.video.uploaderUrl ?: return
+        updateSuccess { it.copy(channelDefaults = null) }
+        viewModelScope.launch { userPreferences.setChannelDefaults(url, null) }
+        _events.tryEmit("Channel settings cleared")
+    }
+
+    private fun storeChannelDefaults(s: PlayerUiState.Success, d: com.youtubly.app.domain.playback.ChannelDefaults, message: String?) {
+        val url = s.info.video.uploaderUrl ?: run { _events.tryEmit("This channel can't be identified"); return }
+        updateSuccess { it.copy(channelDefaults = d.takeUnless { x -> x.isEmpty }) }
+        viewModelScope.launch { userPreferences.setChannelDefaults(url, d) }
+        message?.let { _events.tryEmit(it) }
+    }
+
     /** Quick speed button: 1x > 1.25x > 1.5x > 1.75x > 2x > 0.75x > 1x. */
     fun cycleSpeed() {
         val order = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 0.75f)
@@ -410,7 +489,7 @@ class PlayerViewModel @Inject constructor(
         val s = success() ?: return
         viewModelScope.launch {
             userPreferences.setVideoSpeed(s.info.video.id, null)
-            val channelSpeed = s.info.video.uploaderUrl?.let { userPreferences.channelSpeeds.first()[it] }
+            val channelSpeed = com.youtubly.app.domain.playback.ChannelDefaults.lookup(userPreferences.channelSpeeds.first(), s.info.video.uploaderUrl)
             val back = channelSpeed ?: userPreferences.playbackSpeed.first()
             playerController.setSpeed(back)
             updateSuccess { it.copy(videoSpeedRemembered = false, speed = back) }

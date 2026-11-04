@@ -16,6 +16,8 @@ class BlurPreferencesStore(internal val ds: DataStore<Preferences>) {
         val STRENGTH = intPreferencesKey("strength")
         val PADDING = intPreferencesKey("padding")
         val BODY = stringPreferencesKey("body_coverage")
+        val BACK_VIEWS = booleanPreferencesKey("cover_back_views")
+        val CH_OVERRIDES = stringPreferencesKey("channel_overrides_json")
         val MIN_FACE = intPreferencesKey("min_face")
         val CONF = floatPreferencesKey("gender_conf")
         val THUMBS = booleanPreferencesKey("apply_thumbs")
@@ -41,6 +43,8 @@ class BlurPreferencesStore(internal val ds: DataStore<Preferences>) {
             mode = p[K.MODE]?.let { runCatching { BlurMode.valueOf(it) }.getOrNull() } ?: d.mode,
             strength = p[K.STRENGTH] ?: d.strength,
             facePaddingPct = p[K.PADDING] ?: d.facePaddingPct,
+            coverBackViews = p[K.BACK_VIEWS] ?: d.coverBackViews,
+            channelOverrides = ChannelBlurOverride.decodeMap(p[K.CH_OVERRIDES]),
             bodyCoverage = p[K.BODY]?.let { runCatching { BodyCoverage.valueOf(it) }.getOrNull() } ?: d.bodyCoverage,
             minFaceSizePct = p[K.MIN_FACE] ?: d.minFaceSizePct,
             genderConfidence = p[K.CONF] ?: d.genderConfidence,
@@ -65,6 +69,13 @@ class BlurPreferencesStore(internal val ds: DataStore<Preferences>) {
     suspend fun setBlurUncertain(v: Boolean) = ds.edit { it[K.UNCERTAIN] = v }
     suspend fun setMode(v: BlurMode) = ds.edit { it[K.MODE] = v.name }
     suspend fun setStrength(v: Int) = ds.edit { it[K.STRENGTH] = v.coerceIn(5, 50) }
+    /** Saves one channel's own blur choices; null or an empty value removes them. */
+    suspend fun setChannelOverride(channelKey: String, override: ChannelBlurOverride?) = ds.edit { p ->
+        val map = ChannelBlurOverride.decodeMap(p[K.CH_OVERRIDES]).toMutableMap()
+        if (override == null || override.isEmpty) map.remove(channelKey) else map[channelKey] = override
+        p[K.CH_OVERRIDES] = ChannelBlurOverride.encodeMap(map)
+    }
+    suspend fun setCoverBackViews(v: Boolean) = ds.edit { it[K.BACK_VIEWS] = v }
     suspend fun setBodyCoverage(v: BodyCoverage) = ds.edit { it[K.BODY] = v.name }
     suspend fun setPadding(v: Int) = ds.edit { it[K.PADDING] = v.coerceIn(0, 60) }
     suspend fun setMinFaceSize(v: Int) = ds.edit { it[K.MIN_FACE] = v.coerceIn(2, 30) }

@@ -856,8 +856,23 @@ class PlayerController @Inject constructor(
     private var loudness: android.media.audiofx.LoudnessEnhancer? = null
     private var loudnessSessionId = C.AUDIO_SESSION_ID_UNSET
 
+    /** The boost the user chose themselves; a channel's own boost is applied on top and never replaces it. */
+    private var userBoostDb = 0
+
     fun setBoostDb(db: Int) {
-        _boostDb.value = db.coerceIn(0, VolumeBoost.MAX_DB)
+        userBoostDb = db.coerceIn(0, VolumeBoost.MAX_DB)
+        _boostDb.value = userBoostDb
+        attachLoudness()
+    }
+
+    /**
+     * A channel's own sound for the video starting now: [boostDb] and [presetName] (an EqPreset name), or null to fall
+     * back to what the user picked. Temporary: nothing is saved, so the next channel starts from the user's own choice again.
+     */
+    fun applyChannelSound(boostDb: Int?, presetName: String?) {
+        _boostDb.value = (boostDb ?: userBoostDb).coerceIn(0, VolumeBoost.MAX_DB)
+        val own = com.youtubly.app.domain.audio.EqPreset.fromName(fxPrefs.getString("eq_preset", null))
+        _eqPreset.value = presetName?.let { com.youtubly.app.domain.audio.EqPreset.fromName(it) } ?: own
         attachLoudness()
     }
 

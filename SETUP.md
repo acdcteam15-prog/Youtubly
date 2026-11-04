@@ -40,3 +40,19 @@ If YouTube playback breaks, bump `newpipe` there.
 
 ## Private repository?
 Works, but each phone needs a read-only token: *Settings > App updates > Advanced*. A public repository needs nothing.
+
+## YouTube fixes install themselves
+YouTube changes its pages now and then, and the app stops working until its extractor library (NewPipeExtractor) is
+updated. The **Self-heal YouTube** workflow (`.github/workflows/self-heal.yml`) handles that for you:
+
+- Every day at 05:17 UTC it checks for a newer extractor release.
+- If there is one, it builds the app with it, runs all the tests and a live check against YouTube.
+- If everything is fine, it commits the new version and starts a release. On your phone, *Settings > App updates*
+  downloads it on Wi-Fi and you tap **Install**.
+- If the new version breaks something, it does **not** install it and opens an issue in your repository to tell you.
+- GitHub's servers are sometimes refused by YouTube even when phones work. So "the live check fails with both the old and
+  the new version" does not block an update; only "worked before, broken now" does.
+
+To try it right away: GitHub > your repository > **Actions > Self-heal YouTube > Run workflow**.
+Good to know: GitHub pauses scheduled workflows in a repository that has had no activity for 60 days; running it once by
+hand switches it back on. The release it starts needs the signing secrets from the first-time setup.

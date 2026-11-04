@@ -23,6 +23,7 @@ private val Context.blurDataStore by preferencesDataStore(name = "blur_prefs")
 object BlurModule {
     @Provides @Singleton fun store(@ApplicationContext c: Context) = BlurPreferencesStore(c.blurDataStore)
     @Provides @Singleton fun detector() = FaceDetector()
+    @Provides @Singleton fun personSegmenter() = com.youtubly.app.blur.PersonSegmenter()
     @Provides @Singleton fun classifier(@ApplicationContext c: Context) = GenderClassifier(c)
 
     /**
@@ -42,8 +43,8 @@ object BlurModule {
     }
 
     @Provides @Singleton fun blurDiskCache(@ApplicationContext c: Context) = BlurDiskCache(c)
-    @Provides @Singleton fun engine(d: FaceDetector, g: GenderClassifier, s: BlurPreferencesStore, cache: BlurDiskCache) =
-        BlurEngine(d, g, s, CoroutineScope(SupervisorJob() + Dispatchers.Default), cache)
+    @Provides @Singleton fun engine(d: FaceDetector, g: GenderClassifier, s: BlurPreferencesStore, cache: BlurDiskCache, people: com.youtubly.app.blur.PersonSegmenter) =
+        BlurEngine(d, g, s, CoroutineScope(SupervisorJob() + Dispatchers.Default), cache, people)
 }
 
 @Module

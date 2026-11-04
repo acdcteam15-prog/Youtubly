@@ -82,9 +82,11 @@ class ChannelViewModel @Inject constructor(
         }?.video
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    /** Whether the optional Shorts tab is switched on in Settings. */
-    val showShorts: StateFlow<Boolean> = userPreferences.showShortsTab
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    /** Whether the Shorts tab shows: this channel's own choice, else the switch in Settings. */
+    val showShorts: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(userPreferences.showShortsTab, userPreferences.channelDefaults, _uiState) { global, rules, st ->
+        val url = (st as? ChannelUiState.Success)?.channel?.url
+        com.youtubly.app.domain.playback.ChannelDefaults.lookup(rules, url)?.showShortsTab ?: global
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _search = MutableStateFlow(ChannelSearchState())
     val search: StateFlow<ChannelSearchState> = _search

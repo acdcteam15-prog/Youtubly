@@ -772,6 +772,29 @@ private fun PlaybackSettingsSheet(s: PlayerUiState.Success, viewModel: PlayerVie
             }
 
 
+            SheetSection("This channel")
+            val chDefaults = s.channelDefaults
+            Text(
+                if (chDefaults == null) "Save today's choices (audio only, quality, captions) for every video of this channel."
+                else "Saved: " + com.youtubly.app.domain.playback.ChannelDefaults.summary(chDefaults),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingChip(if (chDefaults == null) "Save current settings" else "Update saved settings", chDefaults != null) { viewModel.saveChannelDefaults() }
+                if (chDefaults != null) SettingChip("Clear", false) { viewModel.clearChannelDefaults() }
+            }
+            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Skip intro", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = { viewModel.setSkipIntro((chDefaults?.skipIntroSec ?: 0) - 5) }) { Icon(Icons.Rounded.Remove, "Less") }
+                Text("${chDefaults?.skipIntroSec ?: 0} s", style = MaterialTheme.typography.titleSmall)
+                IconButton(onClick = { viewModel.setSkipIntro((chDefaults?.skipIntroSec ?: 0) + 5) }) { Icon(Icons.Rounded.Add, "More") }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingChip("Skip intro until here", false) { viewModel.skipIntroToHere() }
+            }
+
             SheetSection("Sleep timer")
             val sleep by viewModel.sleepTimer.state.collectAsStateWithLifecycle()
             val running = sleep as? com.youtubly.app.playback.SleepTimer.State.Running

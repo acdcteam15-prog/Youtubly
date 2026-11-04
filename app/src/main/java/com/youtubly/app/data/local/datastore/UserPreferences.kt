@@ -87,8 +87,10 @@ class UserPreferences @Inject constructor(
     /** Remember [speed] for [channelUrl]; null removes the entry (falls back to the global speed). */
     suspend fun setChannelSpeed(channelUrl: String, speed: Float?) {
         context.userPrefsDataStore.edit { prefs ->
+            val key = com.youtubly.app.domain.playback.ChannelDefaults.keyOf(channelUrl) ?: channelUrl
             val map = decodeSpeeds(prefs[keyChannelSpeeds]).toMutableMap()
-            if (speed == null) map.remove(channelUrl) else map[channelUrl] = speed
+            map.remove(channelUrl)                       // an entry saved under the raw URL by an older version
+            if (speed == null) map.remove(key) else map[key] = speed
             prefs[keyChannelSpeeds] = encodeSpeeds(map)
         }
     }
@@ -304,6 +306,24 @@ class UserPreferences @Inject constructor(
     /** Download a new build in the background on Wi-Fi so installing it is one tap. */
     val autoDownloadUpdates: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyAutoDownloadUpdates] ?: true }
     suspend fun setAutoDownloadUpdates(v: Boolean) { context.userPrefsDataStore.edit { it[keyAutoDownloadUpdates] = v } }
+
+    // ---------------- per-channel defaults (audio only, quality, captions, skip intro) ----------------
+    private val keyChannelDefaults = stringPreferencesKey("channel_defaults_json")
+
+    val channelDefaults: Flow<Map<String, com.youtubly.app.domain.playback.ChannelDefaults>> =
+        context.userPrefsDataStore.data.map { com.youtubly.app.domain.playback.ChannelDefaults.decode(it[keyChannelDefaults]) }
+
+    /** Saves [defaults] for the channel [url]; null or an empty value removes the entry. The newest 500 channels are kept. */
+    suspend fun setChannelDefaults(url: String, defaults: com.youtubly.app.domain.playback.ChannelDefaults?) {
+        context.userPrefsDataStore.edit { prefs ->
+            val key = com.youtubly.app.domain.playback.ChannelDefaults.keyOf(url) ?: return@edit
+            val map = LinkedHashMap(com.youtubly.app.domain.playback.ChannelDefaults.decode(prefs[keyChannelDefaults]))
+            map.remove(key); map.remove(url)
+            if (defaults != null && !defaults.isEmpty) map[key] = defaults
+            while (map.size > 500) map.remove(map.keys.first())
+            prefs[keyChannelDefaults] = com.youtubly.app.domain.playback.ChannelDefaults.encode(map)
+        }
+    }
 
     // ---------------- app updates (GitHub Releases) ----------------
     private val keyAutoUpdateCheck = booleanPreferencesKey("auto_update_check")

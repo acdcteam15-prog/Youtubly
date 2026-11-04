@@ -58,14 +58,15 @@ class MusicRemover @Inject constructor(
     fun onNewItem(uploaderUrl: String?) {
         itemToken++
         channelKey = channelKeyOf(uploaderUrl)
-        _status.value = if (settings.value.enabled) LiveStatus.IDLE else LiveStatus.OFF
+        _status.value = if (settings.value.enabled || channelKey in settings.value.alwaysChannels) LiveStatus.IDLE else LiveStatus.OFF
     }
 
     /** Should the block starting now be processed? Read by the audio thread. */
     fun wantsProcessing(): Boolean {
         val s = settings.value
-        if (!s.enabled) return false
         val ch = channelKey
+        if (ch != null && ch in s.alwaysChannels) return true      // this channel always gets it, even with the feature off
+        if (!s.enabled) return false
         return ch == null || ch !in s.whitelist
     }
 
@@ -93,7 +94,7 @@ class MusicRemover @Inject constructor(
 
     init {
         // Load the model as soon as the feature is on, so the first block isn't slowed by it.
-        scope.launch { settings.collect { if (it.enabled) liveModel() } }
+        scope.launch { settings.collect { if (it.enabled || it.alwaysChannels.isNotEmpty()) liveModel() } }
     }
 
     // ---------------- model ----------------

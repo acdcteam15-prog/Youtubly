@@ -31,7 +31,8 @@ class FaceTracker(private val engine: BlurEngine) {
     @Volatile private var tracked: List<Pair<NormRegion, Long>> = emptyList()
     @Volatile private var failed = false
 
-    fun settings(): BlurSettings = engine.settings.value
+    /** The settings for the channel being played (its own coverage / gender choices included). */
+    fun settings(): BlurSettings = engine.effective(channelKey)
     fun isActive(): Boolean = engine.shouldProcess(channelKey, BlurSurface.PLAYBACK, videoId = videoId)
 
     fun reset() { tracked = emptyList(); failed = false }

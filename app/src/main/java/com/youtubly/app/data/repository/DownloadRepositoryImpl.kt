@@ -183,8 +183,16 @@ class DownloadRepositoryImpl @Inject constructor(
         return watched.size
     }
 
-    override suspend fun autoDeleteWatched(excludeId: String?): Int =
-        if (userPreferences.autoDeleteWatched.first()) deleteWatched(excludeId) else 0
+    override suspend fun autoDeleteWatched(excludeId: String?): Int {
+        val global = userPreferences.autoDeleteWatched.first()
+        val rules = userPreferences.channelDefaults.first()
+        // A channel can switch it on or off for itself, whatever the global switch says.
+        val victims = com.youtubly.app.domain.download.AutoDelete.targets(
+            observeDownloads().first(), excludeId, global, WATCHED_PERCENT
+        ) { url -> com.youtubly.app.domain.playback.ChannelDefaults.lookup(rules, url)?.autoDeleteWatched }
+        victims.forEach { deleteDownload(it.id) }
+        return victims.size
+    }
 
     override suspend fun recordLocalProgress(id: String, percent: Int) =
         downloadDao.updateWatched(id, percent.coerceIn(0, 100))

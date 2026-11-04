@@ -163,6 +163,8 @@ dependencies {
     // Content blur: bundled on-device face detection (offline, no Play Services), optional user-imported
     // gender model (LiteRT = the new name of TensorFlow Lite), and Task.await() for ML Kit.
     implementation(libs.mlkit.face.detection)
+    // Person shapes (bundled, offline): covers people seen from behind, where no face can be found.
+    implementation(libs.mlkit.segmentation.selfie)
     implementation(libs.litert)
     implementation(libs.kotlinx.coroutines.play.services)
 

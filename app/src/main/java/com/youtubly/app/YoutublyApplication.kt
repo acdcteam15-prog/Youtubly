@@ -29,6 +29,7 @@ class YoutublyApplication : Application(), Configuration.Provider, SingletonImag
     @Inject lateinit var playlistAutoFinisher: com.youtubly.app.data.repository.PlaylistAutoFinisher
     @Inject lateinit var blurStore: com.youtubly.app.blur.BlurPreferencesStore
     @Inject lateinit var musicStore: com.youtubly.app.music.MusicPreferencesStore
+    @Inject lateinit var userPreferences: com.youtubly.app.data.local.datastore.UserPreferences
 
     override fun onCreate() {
         super.onCreate()
@@ -46,6 +47,11 @@ class YoutublyApplication : Application(), Configuration.Provider, SingletonImag
         // Videos watched in auto-remove playlists leave them (and finished playlists move to the shelf).
         playlistAutoFinisher.start()
         com.youtubly.app.security.AppLockState.init(this)
+        // Per-channel rules: keep the "hidden words" filter current, and look for new videos of auto-download channels.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
+            userPreferences.channelDefaults.collect { com.youtubly.app.domain.playback.ChannelRulesFilter.update(it) }
+        }
+        com.youtubly.app.download.ChannelAutoDownloadWorker.schedule(this)
         // Crash loop (two crashes soon after starting): switch the risky features off so the app opens again.
         if (com.youtubly.app.security.CrashGuard.install(this)) {
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {

@@ -31,6 +31,8 @@ data class MusicSettings(
     /** How much of the music is mixed back in: 0 = fully removed … 50 = half. */
     val musicLevelPct: Int = 0,
     val whitelist: Set<String> = emptySet(),
+    /** Channels where the music is removed even when the feature is off in general. */
+    val alwaysChannels: Set<String> = emptySet(),
     val threads: Int = 4,
     /** 1 = normal, 2 = strong, 3 = max (see SpectralSeparator.maskPower). */
     val strength: Int = 1,

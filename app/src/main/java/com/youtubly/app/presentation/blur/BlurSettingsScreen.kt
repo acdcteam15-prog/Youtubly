@@ -98,9 +98,16 @@ fun BlurSettingsScreen(onBack: () -> Unit, onOpenWhitelist: () -> Unit, vm: Blur
                         }
                     }
                     Text(
-                        "The body is estimated from the face, so someone seen from behind (no face visible) is not covered.",
+                        "The body is estimated from the face.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (s.bodyCoverage != BodyCoverage.FACE) {
+                        SwitchRow(
+                            "Also cover people seen from behind",
+                            "Finds person shapes with no visible face (back turned, face too small) and hides them too. Works best on people fairly close to the camera.",
+                            s.coverBackViews, vm::setCoverBackViews
+                        )
+                    }
                 }
             }
 

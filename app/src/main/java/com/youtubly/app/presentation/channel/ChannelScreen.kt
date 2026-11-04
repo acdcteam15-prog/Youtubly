@@ -33,6 +33,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.ui.focus.focusRequester
@@ -44,6 +46,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +90,8 @@ fun ChannelScreen(
     val sort by viewModel.sort.collectAsStateWithLifecycle()
     val showShorts by viewModel.showShorts.collectAsStateWithLifecycle()
     val continueVideo by viewModel.continueVideo.collectAsStateWithLifecycle()
+    var showSettings by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     LaunchedEffect(channelUrl) { viewModel.load(channelUrl) }
     androidx.activity.compose.BackHandler(enabled = search.open) { viewModel.closeSearch() }
     val refreshing = state is ChannelUiState.Loading
@@ -119,7 +125,8 @@ fun ChannelScreen(
                     onLoadAll = viewModel::loadAll,
                     onRetry = viewModel::retryTab,
                     onVideoClick = onVideoClick,
-                    onPlaylistClick = onPlaylistClick
+                    onPlaylistClick = onPlaylistClick,
+                    onOpenSettings = { showSettings = true }
                 )
             }
         }
@@ -132,6 +139,20 @@ fun ChannelScreen(
                 onClick = viewModel::openSearch,
                 modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
             ) { Icon(Icons.Rounded.Search, "Search this channel", tint = Color.White) }
+            // The three-dot menu next to search: Channel settings.
+            Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 8.dp, end = 64.dp)) {
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
+                ) { Icon(Icons.Rounded.MoreVert, "More", tint = Color.White) }
+                androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Channel settings") },
+                        leadingIcon = { Icon(Icons.Rounded.Tune, null) },
+                        onClick = { menuOpen = false; showSettings = true }
+                    )
+                }
+            }
         }
         val channelName = (state as? ChannelUiState.Success)?.channel?.name.orEmpty()
         androidx.compose.animation.AnimatedVisibility(
@@ -150,6 +171,9 @@ fun ChannelScreen(
             )
         }
     }
+    val settingsChannel = (state as? ChannelUiState.Success)?.channel
+    val settingsRef = settingsChannel?.let { ch -> com.youtubly.app.blur.channelKeyOf(ch.url)?.let { com.youtubly.app.blur.ChannelRef(it, ch.name, ch.avatarUrl) } }
+    if (showSettings && settingsRef != null) ChannelSettingsSheet(settingsRef, onDismiss = { showSettings = false })
 }
 
 @Composable
@@ -232,6 +256,7 @@ private fun ChannelContent(
     sort: VideoSort,
     showShorts: Boolean,
     continueVideo: Video?,
+    onOpenSettings: () -> Unit,
     playlistIds: (String) -> List<String>,
     onTab: (ChannelTabKind) -> Unit,
     onSort: (VideoSort) -> Unit,
@@ -342,7 +367,14 @@ private fun ChannelContent(
                     )
                 }
                 val blurRef = androidx.compose.runtime.remember(channel.url) { com.youtubly.app.blur.channelKeyOf(channel.url)?.let { com.youtubly.app.blur.ChannelRef(it, channel.name, channel.avatarUrl) } }
-                com.youtubly.app.presentation.blur.ChannelBlurChip(blurRef, Modifier.padding(top = 8.dp))
+                androidx.compose.foundation.layout.Row(Modifier.padding(top = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    com.youtubly.app.presentation.blur.ChannelBlurChip(blurRef)
+                    androidx.compose.material3.AssistChip(
+                        onClick = onOpenSettings,
+                        label = { Text("Channel settings") },
+                        leadingIcon = { Icon(Icons.Rounded.Tune, null) }
+                    )
+                }
                 continueVideo?.let { v ->
                     androidx.compose.material3.Button(
                         onClick = { onVideoClick(v) },

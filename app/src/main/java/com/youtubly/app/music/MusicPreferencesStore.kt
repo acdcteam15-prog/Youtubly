@@ -15,6 +15,7 @@ class MusicPreferencesStore(internal val ds: DataStore<Preferences>) {
         val STRENGTH = intPreferencesKey("strength")
         val WHITELIST = stringSetPreferencesKey("whitelist")
         val WL_META = stringSetPreferencesKey("whitelist_meta")
+        val ALWAYS = stringSetPreferencesKey("always_channels")
         val BENCH = stringSetPreferencesKey("benchmarks")   // "id|secPerBlock|blockSec"
     }
 
@@ -25,6 +26,7 @@ class MusicPreferencesStore(internal val ds: DataStore<Preferences>) {
             modelId = MusicModels.byId(p[K.MODEL]).id,
             musicLevelPct = p[K.LEVEL] ?: d.musicLevelPct,
             whitelist = p[K.WHITELIST] ?: d.whitelist,
+            alwaysChannels = p[K.ALWAYS] ?: d.alwaysChannels,
             threads = p[K.THREADS] ?: d.threads,
             strength = (p[K.STRENGTH] ?: d.strength).coerceIn(1, 3),
         )
@@ -59,6 +61,9 @@ class MusicPreferencesStore(internal val ds: DataStore<Preferences>) {
     suspend fun removeFromWhitelist(id: String) = ds.edit { p ->
         p[K.WHITELIST] = (p[K.WHITELIST] ?: emptySet()) - id
         p[K.WL_META] = (p[K.WL_META] ?: emptySet()).filterNot { it.startsWith(id + ChannelRef.SEP) }.toSet()
+    }
+    suspend fun setAlways(channelKey: String, on: Boolean) = ds.edit { p ->
+        p[K.ALWAYS] = (p[K.ALWAYS] ?: emptySet()).let { if (on) it + channelKey else it - channelKey }
     }
     suspend fun clearWhitelist() = ds.edit { it.remove(K.WHITELIST); it.remove(K.WL_META) }
 }

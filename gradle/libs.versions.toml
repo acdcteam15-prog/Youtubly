@@ -24,6 +24,7 @@ coil = "3.6.3"
 coroutines = "1.11.0"
 serialization = "1.12.0"
 mlkit-face = "16.1.7"
+mlkit-segmentation = "16.0.0-beta6"
 litert = "2.1.0"
 desugar = "2.1.5"
 newpipe = "v0.26.5"
@@ -86,6 +87,7 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 
 mlkit-face-detection = { module = "com.google.mlkit:face-detection", version.ref = "mlkit-face" }
+mlkit-segmentation-selfie = { module = "com.google.mlkit:segmentation-selfie", version.ref = "mlkit-segmentation" }
 litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
 
 newpipe-extractor = { module = "com.github.TeamNewPipe:NewPipeExtractor", version.ref = "newpipe" }

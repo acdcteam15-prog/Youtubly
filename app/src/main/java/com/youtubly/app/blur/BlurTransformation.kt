@@ -22,7 +22,10 @@ class BlurTransformation(
 ) : Transformation() {
 
     // whitelist / per-video exclusions left out of the key: excluded items never get this transformation
-    override val cacheKey = "blur:${surface}:${settings.copy(whitelist = emptySet(), excludedVideos = emptySet()).hashCode()}:$modelId"
+    // This channel's own overrides belong in the key (other channels' do not), so changing one channel's coverage
+    // refreshes only that channel's thumbnails.
+    override val cacheKey = "blur:${surface}:${settings.copy(whitelist = emptySet(), excludedVideos = emptySet(), channelOverrides = emptyMap()).hashCode()}:" +
+        "${channelId?.let { settings.channelOverrides[it] }.hashCode()}:$modelId"
 
     override suspend fun transform(input: Bitmap, size: Size): Bitmap = try {
         val disk = engine.diskCache.takeIf { sourceKey != null && surface == BlurSurface.THUMBNAIL }

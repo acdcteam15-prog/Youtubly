@@ -23,6 +23,7 @@ class BlurEngine(
     val store: BlurPreferencesStore,
     appScope: CoroutineScope,
     val diskCache: BlurDiskCache? = null,
+    private val segmenter: PersonSegmenter? = null,
 ) {
     val settings: StateFlow<BlurSettings> =
         store.settings.stateIn(appScope, SharingStarted.Eagerly, BlurSettings())
@@ -35,7 +36,13 @@ class BlurEngine(
     private val gate = Semaphore(2)
 
     /** Cheap early-exit — call before anything expensive. */
-    fun shouldProcess(channelKey: String?, surface: BlurSurface, s: BlurSettings = settings.value, videoId: String? = null): Boolean = when {
+    fun shouldProcess(channelKey: String?, surface: BlurSurface, sIn: BlurSettings = settings.value, videoId: String? = null): Boolean =
+        shouldProcessWith(sIn.forChannel(channelKey), channelKey, surface, videoId)
+
+    /** The settings as they apply to [channelKey] (its own coverage / gender / always-on choices on top of the general ones). */
+    fun effective(channelKey: String?, s: BlurSettings = settings.value): BlurSettings = s.forChannel(channelKey)
+
+    private fun shouldProcessWith(s: BlurSettings, channelKey: String?, surface: BlurSurface, videoId: String?): Boolean = when {
         surface == BlurSurface.PREVIEW -> s.needsDetection
         !s.enabled || !s.needsDetection -> false
         channelKey != null && channelKey in s.whitelist -> false
@@ -46,9 +53,10 @@ class BlurEngine(
     }
 
     /** Thumbnails / preview: detect + render. Detection errors propagate so callers fail closed. */
-    suspend fun process(src: Bitmap, channelKey: String?, surface: BlurSurface, s: BlurSettings = settings.value): BlurOutcome =
+    suspend fun process(src: Bitmap, channelKey: String?, surface: BlurSurface, sIn: BlurSettings = settings.value): BlurOutcome =
         gate.withPermit {
             withContext(Dispatchers.Default) {
+                val s = sIn.forChannel(channelKey)     // this channel's own choices, if it has any
                 val t0 = SystemClock.elapsedRealtime()
                 if (!shouldProcess(channelKey, surface, s)) return@withContext BlurOutcome(src, 0, 0, 0, "skipped")
                 if (src.width < 48 || src.height < 48) return@withContext BlurOutcome(src, 0, 0, 0, "too small")
@@ -85,9 +93,31 @@ class BlurEngine(
                     Rect((b[0] * k).toInt(), (b[1] * k).toInt(), (b[2] * k).toInt(), (b[3] * k).toInt())
                 }
             }
-            return faces.size to regions
+            // People seen from behind have no face to find: add person-shaped blobs that contain no face.
+            val behind = if (s.coverBackViews && s.bodyCoverage != BodyCoverage.FACE) backViewRegions(work, faces, s, extraPaddingPct, k) else emptyList()
+            return faces.size to (regions + behind)
         } finally {
             if (work !== src) work.recycle()
+        }
+    }
+
+    /**
+     * Person-shaped blobs without a face, in [src] coordinates. A person of unknown gender follows "Blur uncertain faces"
+     * when only one gender is selected, and is always hidden when both are. Best effort: if segmentation fails the
+     * face-based regions still apply.
+     */
+    private suspend fun backViewRegions(work: Bitmap, faces: List<Rect>, s: BlurSettings, extraPaddingPct: Int, k: Float): List<Rect> {
+        val seg = segmenter ?: return emptyList()
+        if (s.needsClassification && !s.blurUncertain) return emptyList()
+        val mask = try { seg.mask(work) } catch (_: Throwable) { return emptyList() }
+        // The mask is as large as the picture it was computed from, but map it explicitly to be safe.
+        val sx = work.width.toFloat() / mask.width
+        val sy = work.height.toFloat() / mask.height
+        val faceBoxes = faces.map { intArrayOf((it.left / sx).toInt(), (it.top / sy).toInt(), (it.right / sx).toInt(), (it.bottom / sy).toInt()) }
+        val grow = s.facePaddingPct / 4 + extraPaddingPct / 3
+        return PersonShapes.withoutFace(PersonShapes.blobs(mask), faceBoxes).map { blob ->
+            val r = PersonShapes.regionFor(blob, s.bodyCoverage, mask.width, mask.height, grow)
+            Rect((r[0] * sx * k).toInt(), (r[1] * sy * k).toInt(), (r[2] * sx * k).toInt(), (r[3] * sy * k).toInt())
         }
     }
 

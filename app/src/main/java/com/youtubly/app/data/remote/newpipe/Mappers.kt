@@ -6,7 +6,9 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 /** Shorts are filtered out everywhere in the app. */
 fun StreamInfoItem.isShort(): Boolean = isShortFormContent || url.contains("/shorts/")
 
-fun List<StreamInfoItem>.toVideosWithoutShorts(): List<Video> = filterNot { it.isShort() }.map { it.toVideo() }
+/** Without Shorts and without the words a channel has asked to hide (see ChannelRulesFilter). */
+fun List<StreamInfoItem>.toVideosWithoutShorts(): List<Video> =
+    filterNot { it.isShort() }.map { it.toVideo() }.filter(com.youtubly.app.domain.playback.ChannelRulesFilter::allows)
 
 fun StreamInfoItem.toVideo(): Video = Video(
     id = extractVideoId(url),
