@@ -181,7 +181,12 @@ private fun AvailableCard(info: ReleaseInfo, action: @Composable () -> Unit, sec
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Update available: ${info.versionName} (build ${info.build})", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
             val size = UpdateParser.humanSize(info.sizeBytes)
-            if (size.isNotEmpty()) Text(size, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            if (info.patchSize > 0) {
+                Text(
+                    "Small update: ${UpdateParser.humanSize(info.patchSize)} (the full file is $size)",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            } else if (size.isNotEmpty()) Text(size, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
             if (info.required) Text("This update is required.", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
             if (info.notes.isNotBlank()) {
                 Text("What is new", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)

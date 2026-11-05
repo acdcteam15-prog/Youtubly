@@ -27,7 +27,11 @@ data class ReleaseInfo(
     /** The ".sha256" file published next to the APK, when present. */
     val sha256Url: String?,
     val sha256ApiUrl: String?,
-    val publishedAt: String?
+    val publishedAt: String?,
+    /** A small patch from the build installed now to this one (null = none published for it). */
+    val patchUrl: String? = null,
+    val patchApiUrl: String? = null,
+    val patchSize: Long = -1L
 )
 
 /** Pure JSON → [ReleaseInfo] logic (unit-tested; no Android types). */
@@ -36,9 +40,11 @@ object UpdateParser {
     private val APK_NAME = Regex("""^.+-(\d+(?:_\d+)*)-build(\d+)\.apk$""", RegexOption.IGNORE_CASE)
     private val SHA_HEX = Regex("""\b[a-fA-F0-9]{64}\b""")
     private val REQUIRED = Regex("""\[required]""", RegexOption.IGNORE_CASE)
+    /** Youtubly-patch-from101-to105.ytpatch */
+    private val PATCH_NAME = Regex("""^.+-patch-from(\d+)-to(\d+)\.ytpatch$""", RegexOption.IGNORE_CASE)
 
     /** Parses GitHub's "latest release" JSON. Null when there is no APK asset (or the JSON isn't a release). */
-    fun parseRelease(json: String): ReleaseInfo? {
+    fun parseRelease(json: String, currentBuild: Int = -1): ReleaseInfo? {
         val root = runCatching { Json.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return null
         if (root["draft"]?.let { (it as? JsonPrimitive)?.booleanOrNull } == true) return null
         val assets: JsonArray = root["assets"]?.let { runCatching { it.jsonArray }.getOrNull() } ?: return null
@@ -54,6 +60,12 @@ object UpdateParser {
         val build = match.groupValues[2].toIntOrNull() ?: return null
         val sha = objs.firstOrNull { it.str("name") == "$apkName.sha256" }
         val body = (root["body"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+        // The small patch made for exactly the build that is installed now (if the release has one).
+        val patch = objs.firstOrNull { a ->
+            a.str("name")?.let { PATCH_NAME.matchEntire(it) }?.let { m ->
+                m.groupValues[1].toIntOrNull() == currentBuild && m.groupValues[2].toIntOrNull() == build
+            } == true
+        }
 
         return ReleaseInfo(
             versionName = match.groupValues[1].replace('_', '.'),
@@ -65,7 +77,10 @@ object UpdateParser {
             sizeBytes = (apkObj["size"] as? JsonPrimitive)?.longOrNull ?: -1L,
             sha256Url = sha?.str("browser_download_url"),
             sha256ApiUrl = sha?.str("url"),
-            publishedAt = root.str("published_at")
+            publishedAt = root.str("published_at"),
+            patchUrl = patch?.str("browser_download_url"),
+            patchApiUrl = patch?.str("url"),
+            patchSize = (patch?.get("size") as? JsonPrimitive)?.longOrNull ?: -1L
         )
     }
 

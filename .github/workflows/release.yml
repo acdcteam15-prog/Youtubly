@@ -29,7 +29,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -91,6 +91,34 @@ jobs:
           echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
 
+      # Small updates: for each of the newest published builds, a patch that turns THAT apk into this one. A phone
+      # then downloads a few MB instead of the whole file. Failure here never blocks the release: the full APK is
+      # always published too, and the app falls back to it by itself.
+      - name: Small-update patches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_CODE: ${{ steps.pack.outputs.code }}
+        run: |
+          set -u
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bsdiff
+          NEW="dist/${{ steps.pack.outputs.name }}"
+          mkdir -p prev
+          for TAG in $(gh release list --limit 3 --exclude-drafts --json tagName --jq '.[].tagName'); do
+            rm -f prev/*.apk prev/raw.patch
+            gh release download "$TAG" --pattern '*-build*.apk' --dir prev || { echo "skip $TAG"; continue; }
+            OLD=$(ls prev/*.apk | head -1)
+            FROM=$(basename "$OLD" | sed -n 's/.*-build\([0-9][0-9]*\)\.apk$/\1/p')
+            if [ -z "$FROM" ] || [ "$FROM" = "$NEW_CODE" ]; then continue; fi
+            echo "Patch from build $FROM to build $NEW_CODE"
+            if bsdiff "$OLD" "$NEW" prev/raw.patch && python3 scripts/ci/make_patch.py "$OLD" "$NEW" prev/raw.patch "dist/Youtubly-patch-from${FROM}-to${NEW_CODE}.ytpatch"; then
+              :
+            else
+              echo "::warning::could not make the patch from build $FROM (the full APK is still published)"
+            fi
+          done
+          ls -la dist
+
       - name: Verify the APK is signed with the release key
         run: |
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
@@ -123,4 +151,5 @@ jobs:
           files: |
             dist/${{ steps.pack.outputs.name }}
             dist/${{ steps.pack.outputs.name }}.sha256
+            dist/*.ytpatch
           make_latest: true

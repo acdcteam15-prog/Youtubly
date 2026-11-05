@@ -56,3 +56,17 @@ updated. The **Self-heal YouTube** workflow (`.github/workflows/self-heal.yml`) 
 To try it right away: GitHub > your repository > **Actions > Self-heal YouTube > Run workflow**.
 Good to know: GitHub pauses scheduled workflows in a repository that has had no activity for 60 days; running it once by
 hand switches it back on. The release it starts needs the signing secrets from the first-time setup.
+
+## Small updates (a few MB instead of the whole app)
+The app is large (it carries its models and libraries), so a full update is a big download. To avoid that, every release
+also contains small **patches**: `Youtubly-patch-from<old>-to<new>.ytpatch`, one for each of the last three builds.
+
+- On your phone, *Settings > App updates* looks for the patch that matches the build you have installed. If it exists it
+  downloads only that (a few MB) and rebuilds the new version from the installed one on the phone.
+- The rebuilt file is checked twice: the installed copy must be the one the patch was made for, and the result must be
+  byte-for-byte the published APK (SHA-256). If anything is off, the app downloads the full file instead, by itself.
+- More than three builds behind, or a different copy installed (for example a build from another source)? You simply get
+  the full download once; after that you are back on small updates.
+- The patches are made by the release workflow (`scripts/ci/make_patch.py`). The first update after installing a build
+  that knows about patches is the first small one.
+- The app is also built only for 64-bit ARM phones now, which makes the full file several times smaller.

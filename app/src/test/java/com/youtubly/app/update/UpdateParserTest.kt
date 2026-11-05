@@ -79,4 +79,20 @@ class UpdateParserTest {
         assertEquals("", UpdateParser.humanSize(-1))
         assertNotNull(UpdateParser.humanSize(1))
     }
+
+    @Test fun `the patch made for the installed build is found, others are ignored`() {
+        val json = release(extraAsset = """,
+            {"name": "Youtubly-patch-from99-to101.ytpatch", "url": "https://api.github.com/repos/o/r/releases/assets/7",
+             "browser_download_url": "https://github.com/o/r/releases/download/build-101/Youtubly-patch-from99-to101.ytpatch", "size": 4194304},
+            {"name": "Youtubly-patch-from98-to101.ytpatch", "url": "u8", "browser_download_url": "https://x/p98", "size": 9000000}""")
+        val mine = UpdateParser.parseRelease(json, currentBuild = 99)!!
+        assertTrue(mine.patchUrl!!.endsWith("Youtubly-patch-from99-to101.ytpatch"))
+        assertEquals("https://api.github.com/repos/o/r/releases/assets/7", mine.patchApiUrl)
+        assertEquals(4194304L, mine.patchSize)
+        // a phone on a build with no patch, or not telling its build, gets none
+        assertNull(UpdateParser.parseRelease(json, currentBuild = 50)!!.patchUrl)
+        assertNull(UpdateParser.parseRelease(json)!!.patchUrl)
+        // a patch for a different target build is not used
+        assertNull(UpdateParser.parseRelease(json.replace("to101", "to999"), currentBuild = 99)!!.patchUrl)
+    }
 }

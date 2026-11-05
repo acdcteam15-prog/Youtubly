@@ -51,7 +51,8 @@ class UpdateDownloadWorker @AssistedInject constructor(
             versionName = inputData.getString(K_VERSION).orEmpty(), build = build, notes = "",
             required = inputData.getBoolean(K_REQUIRED, false), apkUrl = url, apkApiUrl = inputData.getString(K_API),
             sizeBytes = inputData.getLong(K_SIZE, -1L), sha256Url = inputData.getString(K_SHA),
-            sha256ApiUrl = inputData.getString(K_SHA_API), publishedAt = null
+            sha256ApiUrl = inputData.getString(K_SHA_API), publishedAt = null,
+            patchUrl = inputData.getString(K_PATCH), patchApiUrl = inputData.getString(K_PATCH_API), patchSize = inputData.getLong(K_PATCH_SIZE, -1L)
         )
         runCatching { setForeground(foreground(-1)) }
 
@@ -127,11 +128,15 @@ class UpdateDownloadWorker @AssistedInject constructor(
         private const val K_SHA = "sha"
         private const val K_SHA_API = "shaApi"
         private const val K_REQUIRED = "required"
+        private const val K_PATCH = "patch"
+        private const val K_PATCH_API = "patchApi"
+        private const val K_PATCH_SIZE = "patchSize"
 
         fun enqueue(context: Context, info: ReleaseInfo) {
             val data = workDataOf(
                 K_VERSION to info.versionName, K_BUILD to info.build, K_URL to info.apkUrl, K_API to info.apkApiUrl,
-                K_SIZE to info.sizeBytes, K_SHA to info.sha256Url, K_SHA_API to info.sha256ApiUrl, K_REQUIRED to info.required
+                K_SIZE to info.sizeBytes, K_SHA to info.sha256Url, K_SHA_API to info.sha256ApiUrl, K_REQUIRED to info.required,
+                K_PATCH to info.patchUrl, K_PATCH_API to info.patchApiUrl, K_PATCH_SIZE to info.patchSize
             )
             val request = OneTimeWorkRequestBuilder<UpdateDownloadWorker>()
                 .setInputData(data)

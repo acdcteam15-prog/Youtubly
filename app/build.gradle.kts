@@ -46,6 +46,9 @@ android {
         versionName = appVersionName
         buildConfigField("String", "NEWPIPE_VERSION", "\"$newPipeVersion\"")
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
+        // Only 64-bit ARM phones (every phone of the last years). The other three CPU types would each add their own
+        // copy of the native libraries (ML Kit, LiteRT...) and make the download several times bigger.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     signingConfigs {

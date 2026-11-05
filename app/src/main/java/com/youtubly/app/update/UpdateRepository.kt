@@ -108,7 +108,7 @@ class UpdateRepository @Inject constructor(
                 r.code == 403 || r.code == 429 -> throw IOException("GitHub is limiting requests right now. Try again in a few minutes.")
                 !r.isSuccessful -> throw IOException("GitHub answered ${r.code}.")
             }
-            return UpdateParser.parseRelease(r.body.string())
+            return UpdateParser.parseRelease(r.body.string(), currentBuild)
         }
     }
 
@@ -140,21 +140,9 @@ class UpdateRepository @Inject constructor(
 
             val part = partFileFor(info)
             updateDir.listFiles { f -> f.name.endsWith(".part") && f.name != part.name }?.forEach { it.delete() }   // another build's leftovers
-            var attempt = 0
-            while (true) {
-                try {
-                    downloadResumable(info, url, accept, token, part)
-                    break
-                } catch (e: NoRetryIOException) {
-                    throw e
-                } catch (e: IOException) {
-                    attempt++
-                    if (attempt > MAX_RETRIES) throw e
-                    val so = (_state.value as? UpdateState.Downloading)?.fraction ?: 0f
-                    _state.value = UpdateState.Downloading(info, so, "Connection dropped - continuing ($attempt of $MAX_RETRIES)...")
-                    delay(3_000L * attempt)
-                }
-            }
+            // First choice: a small patch against the installed app; the full file is the fallback.
+            val patched = info.patchUrl != null && tryPatch(info, token, accept, part)
+            if (!patched) downloadWithRetries(info, url, accept, token, part, info.sizeBytes, null)
 
             // Integrity: compare with the published checksum when there is one.
             val expected = fetchChecksum(info, token)
@@ -181,15 +169,64 @@ class UpdateRepository @Inject constructor(
         next
     }
 
+    /** Downloads [url] into [part], reconnecting and continuing when the connection drops. */
+    private suspend fun downloadWithRetries(info: ReleaseInfo, url: String, accept: String, token: String, part: File, sizeHint: Long, label: String?) {
+        var attempt = 0
+        while (true) {
+            try {
+                downloadResumable(info, url, accept, token, part, sizeHint, label)
+                return
+            } catch (e: NoRetryIOException) {
+                throw e
+            } catch (e: IOException) {
+                attempt++
+                if (attempt > MAX_RETRIES) throw e
+                val so = (_state.value as? UpdateState.Downloading)?.fraction ?: 0f
+                _state.value = UpdateState.Downloading(info, so, "Connection dropped - continuing ($attempt of $MAX_RETRIES)...")
+                delay(3_000L * attempt)
+            }
+        }
+    }
+
+    /**
+     * The small update: downloads the patch (a few MB), rebuilds the new APK from the installed one into [out], and
+     * checks it. Returns false, leaving nothing behind, when anything is off (no matching patch, a different installed
+     * copy, a damaged patch...): the caller then downloads the full file.
+     */
+    private suspend fun tryPatch(info: ReleaseInfo, token: String, accept: String, out: File): Boolean {
+        val installed = File(context.applicationInfo.sourceDir)
+        val patchUrl = (if (token.isNotBlank()) info.patchApiUrl else null) ?: info.patchUrl ?: return false
+        if (!patchUrl.startsWith("https://") || !installed.exists()) return false
+        val patchPart = File(updateDir, "patch-${info.build}.part")
+        val label = "Small update (${UpdateParser.humanSize(info.patchSize)} instead of ${UpdateParser.humanSize(info.sizeBytes)})"
+        return try {
+            downloadWithRetries(info, patchUrl, accept, token, patchPart, info.patchSize, label)
+            _state.value = UpdateState.Downloading(info, 0f, "Building the new version from the one installed...")
+            out.delete()
+            PatchApplier.apply(installed, patchPart, out) { f ->
+                _state.value = UpdateState.Downloading(info, f, "Building the new version from the one installed...")
+            }
+            patchPart.delete()
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            patchPart.delete()
+            out.delete()
+            _state.value = UpdateState.Downloading(info, 0f, "The small update could not be used. Downloading the full file...")
+            false
+        }
+    }
+
     /** One connection: continues [part] with a Range request when it already has bytes, and appends what arrives. */
-    private fun downloadResumable(info: ReleaseInfo, url: String, accept: String, token: String, part: File) {
+    private fun downloadResumable(info: ReleaseInfo, url: String, accept: String, token: String, part: File, sizeHint: Long = info.sizeBytes, label: String? = null) {
         val have = if (part.exists()) part.length() else 0L
         val builder = request(url, token, accept).newBuilder()
         if (have > 0) builder.header("Range", "bytes=$have-")
         client.newCall(builder.build()).execute().use { r ->
             when {
                 r.code == 416 -> {                                   // asked for bytes past the end
-                    if (info.sizeBytes > 0 && have == info.sizeBytes) return   // it was already complete
+                    if (sizeHint > 0 && have == sizeHint) return   // it was already complete
                     part.delete()
                     throw IOException("Starting the download again")
                 }
@@ -200,7 +237,7 @@ class UpdateRepository @Inject constructor(
             if (!resumed) part.delete()                              // the server sent the whole file from the start
             val start = if (resumed) have else 0L
             val length = r.body.contentLength()
-            val total = if (length > 0) start + length else info.sizeBytes
+            val total = if (length > 0) start + length else sizeHint
             var done = start
             var lastEmit = 0L
             r.body.byteStream().use { input ->
@@ -214,7 +251,7 @@ class UpdateRepository @Inject constructor(
                         val now = System.currentTimeMillis()
                         if (now - lastEmit > 200) {
                             lastEmit = now
-                            _state.value = UpdateState.Downloading(info, if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else -1f)
+                            _state.value = UpdateState.Downloading(info, if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else -1f, label)
                         }
                     }
                 }
