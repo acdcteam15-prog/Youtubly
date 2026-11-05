@@ -91,6 +91,14 @@ class LibraryViewModel @Inject constructor(
 
     val showShortsTab: StateFlow<Boolean> = userPreferences.showShortsTab
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    // ---- screen and battery while playing ----
+    val keepScreenOnAudio: StateFlow<Boolean> = userPreferences.keepScreenOnAudio.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val keepScreenOnVideo: StateFlow<Boolean> = userPreferences.keepScreenOnVideo.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val lowBatteryAudioPct: StateFlow<Int> = userPreferences.lowBatteryAudioPct.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    fun setKeepScreenOnAudio(v: Boolean) { viewModelScope.launch { userPreferences.setKeepScreenOnAudio(v) } }
+    fun setKeepScreenOnVideo(v: Boolean) { viewModelScope.launch { userPreferences.setKeepScreenOnVideo(v) } }
+    fun setLowBatteryAudioPct(v: Int) { viewModelScope.launch { userPreferences.setLowBatteryAudioPct(v) } }
+
     // ---- Watch later cleanup ----
     val autoCleanWatchLater: StateFlow<Boolean> = userPreferences.autoCleanWatchLater
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)

@@ -78,26 +78,10 @@ fun LocalPlayerScreen(
     // clock/battery icons must be light here regardless of the app theme.
     com.youtubly.app.presentation.components.LightStatusBarIcons()
 
-    // Keep the screen awake exactly while something is actually playing.
-    val activity = LocalContext.current as? android.app.Activity
-    DisposableEffect(activity, viewModel.playerController.player) {
-        val player = viewModel.playerController.player
-        val listener = object : androidx.media3.common.Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) {
-                    activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } else {
-                    activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                }
-            }
-        }
-        if (player.isPlaying) activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        player.addListener(listener)
-        onDispose {
-            player.removeListener(listener)
-            activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-    }
+    // Keep the screen awake while something plays - except in audio mode (or an audio-only file), unless Settings says otherwise.
+    val playingAudioMode by viewModel.playerController.audioMode.collectAsStateWithLifecycle()
+    val localAudioFile = (state as? LocalPlayerUiState.Ready)?.item?.isAudioOnly == true
+    com.youtubly.app.presentation.components.KeepScreenOnWhilePlaying(viewModel.playerController.player, playingAudioMode || localAudioFile)
 
     var fullscreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }

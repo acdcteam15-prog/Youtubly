@@ -259,6 +259,7 @@ class PlayerViewModel @Inject constructor(
             // This channel's own sound (volume boost / preset), or back to the user's own choice.
             playerController.applyChannelSound(channelDefaults?.volumeBoostDb, channelDefaults?.soundPreset)
             when {
+                policy.lowBattery && options.audioOnly -> _events.tryEmit("Battery is low: playing audio only to save power")
                 channelDefaults != null && channelDefaults.skipIntroSec > 0 && start == channelDefaults.skipIntroSec * 1000L && resumeAt < start ->
                     _events.tryEmit("Skipped the intro (${channelDefaults.skipIntroSec} s)")
                 start > 0 -> _events.tryEmit("Resumed at ${formatDuration(start / 1000)}")

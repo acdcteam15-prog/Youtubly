@@ -26,6 +26,8 @@ import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.SettingsBackupRestore
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.BatteryAlert
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Link
@@ -100,10 +102,13 @@ fun SettingsScreen(
     val dataSaverAudioOnly by viewModel.dataSaverAudioOnly.collectAsStateWithLifecycle()
     val music by musicVm.settings.collectAsStateWithLifecycle()
     val autoCleanWatchLater by viewModel.autoCleanWatchLater.collectAsStateWithLifecycle()
+    val keepOnAudio by viewModel.keepScreenOnAudio.collectAsStateWithLifecycle()
+    val keepOnVideo by viewModel.keepScreenOnVideo.collectAsStateWithLifecycle()
+    val lowBatteryPct by viewModel.lowBatteryAudioPct.collectAsStateWithLifecycle()
     val appLockOn by com.youtubly.app.security.AppLockState.enabled.collectAsStateWithLifecycle()
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var query by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
-    val keywords = remember { mapOf("Your library" to "history hidden videos channels groups lectures news open youtube links", "Features" to "features content blur faces music remover sponsorblock sponsors dearrow clickbait titles thumbnails", "Playback" to "playback seek step swipe gestures autoplay picture-in-picture pip audio screen off rotate fullscreen", "Data and quality" to "data quality wifi wi-fi mobile saver audio-only 360p", "Downloads" to "downloads wifi battery overnight rules pause storage", "Appearance" to "appearance theme dark light black accent colour color wallpaper material you tinted surfaces", "More" to "more bedtime night shorts watch later clean up app lock fingerprint incognito", "About" to "about updates version storage backup restore diagnostics errors") }
+    val keywords = remember { mapOf("Your library" to "history hidden videos channels groups lectures news open youtube links", "Features" to "features content blur faces music remover sponsorblock sponsors dearrow clickbait titles thumbnails", "Playback" to "playback seek step swipe gestures autoplay picture-in-picture pip audio screen off rotate fullscreen keep screen on awake audio mode battery low power", "Data and quality" to "data quality wifi wi-fi mobile saver audio-only 360p", "Downloads" to "downloads wifi battery overnight rules pause storage", "Appearance" to "appearance theme dark light black accent colour color wallpaper material you tinted surfaces", "More" to "more bedtime night shorts watch later clean up app lock fingerprint incognito", "About" to "about updates version storage backup restore diagnostics errors") }
     fun show(section: String) = query.isBlank() || com.youtubly.app.core.SearchText.matches(keywords[section].orEmpty() + " " + section, query)
     PlainBackground {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -166,6 +171,13 @@ fun SettingsScreen(
                         ToggleRow(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", "Keep watching in a small window when you leave", autoPip, viewModel::setAutoPip)
                         ToggleRow(Icons.Rounded.Headphones, "Keep audio with screen off", "Saves data; pauses if turned off", backgroundAudio, viewModel::setBackgroundAudio)
                         ToggleRow(Icons.Rounded.ScreenRotation, "Rotate to fullscreen", "Turn the phone sideways to go fullscreen", rotateToFullscreen, viewModel::setRotateToFullscreen)
+                        ToggleRow(Icons.Rounded.LightMode, "Keep screen on while watching", "The screen stays awake during video", keepOnVideo, viewModel::setKeepScreenOnVideo)
+                        ToggleRow(
+                            Icons.Rounded.Headphones, "Keep screen on in audio mode",
+                            "Off: the screen turns off by itself while you listen",
+                            keepOnAudio, viewModel::setKeepScreenOnAudio
+                        )
+                        BatteryRuleRow(lowBatteryPct, viewModel::setLowBatteryAudioPct)
                     }
                 }
 
@@ -237,6 +249,32 @@ fun SettingsScreen(
                         NavRow(Icons.Rounded.BugReport, "Diagnostics", "Recent errors, copyable for troubleshooting", { onOpenRoute(Screen.Diagnostics.route) })
                     }
                 }
+            }
+        }
+    }
+}
+
+/** "Low battery: listen only" - chips for the battery level at or below which new videos start as audio only. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun BatteryRuleRow(pct: Int, onChange: (Int) -> Unit) {
+    Column(Modifier.padding(vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.BatteryAlert, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.padding(start = 16.dp)) {
+                Text("Low battery: audio only", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "New videos start without picture at or below this level (not while charging)",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.padding(start = 40.dp, top = 8.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(0 to "Off", 10 to "10%", 15 to "15%", 20 to "20%", 30 to "30%").forEach { (value, label) ->
+                androidx.compose.material3.FilterChip(selected = pct == value, onClick = { onChange(value) }, label = { Text(label) })
             }
         }
     }

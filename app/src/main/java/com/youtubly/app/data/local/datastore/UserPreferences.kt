@@ -307,6 +307,23 @@ class UserPreferences @Inject constructor(
     val autoDownloadUpdates: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyAutoDownloadUpdates] ?: true }
     suspend fun setAutoDownloadUpdates(v: Boolean) { context.userPrefsDataStore.edit { it[keyAutoDownloadUpdates] = v } }
 
+    // ---------------- screen and battery while playing ----------------
+    private val keyKeepOnAudio = booleanPreferencesKey("keep_screen_on_audio")
+    private val keyKeepOnVideo = booleanPreferencesKey("keep_screen_on_video")
+    private val keyLowBatteryPct = intPreferencesKey("low_battery_audio_pct")
+
+    /** Keep the screen awake while listening in audio mode. Off by default: the screen turns off by itself. */
+    val keepScreenOnAudio: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyKeepOnAudio] ?: false }
+    suspend fun setKeepScreenOnAudio(v: Boolean) { context.userPrefsDataStore.edit { it[keyKeepOnAudio] = v } }
+
+    /** Keep the screen awake while watching video (the long-standing behaviour). */
+    val keepScreenOnVideo: Flow<Boolean> = context.userPrefsDataStore.data.map { it[keyKeepOnVideo] ?: true }
+    suspend fun setKeepScreenOnVideo(v: Boolean) { context.userPrefsDataStore.edit { it[keyKeepOnVideo] = v } }
+
+    /** Battery percentage at or below which new videos start as audio only (0 = never). Not while charging. */
+    val lowBatteryAudioPct: Flow<Int> = context.userPrefsDataStore.data.map { it[keyLowBatteryPct] ?: 0 }
+    suspend fun setLowBatteryAudioPct(v: Int) { context.userPrefsDataStore.edit { it[keyLowBatteryPct] = v.coerceIn(0, 50) } }
+
     // ---------------- per-channel defaults (audio only, quality, captions, skip intro) ----------------
     private val keyChannelDefaults = stringPreferencesKey("channel_defaults_json")
 

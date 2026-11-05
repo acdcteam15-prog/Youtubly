@@ -18,7 +18,9 @@ data class NetworkPlaybackPolicy(
     val maxHeight: Int?,
     val metered: Boolean,
     val dataSaver: Boolean,
-    val startAudioOnly: Boolean
+    val startAudioOnly: Boolean,
+    /** The battery is low (below the user's limit, not charging): the video starts as audio only. */
+    val lowBattery: Boolean = false
 )
 
 /**
@@ -29,7 +31,8 @@ data class NetworkPlaybackPolicy(
 @Singleton
 class NetworkPolicy @Inject constructor(
     private val connectivity: ConnectivityObserver,
-    private val prefs: UserPreferences
+    private val prefs: UserPreferences,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -42,12 +45,25 @@ class NetworkPolicy @Inject constructor(
         val dataSaver = prefs.dataSaver.first() && metered
         val chosen = if (metered) prefs.mobileQuality.first() else prefs.wifiQuality.first()
         val cap = capFor(chosen, dataSaver)
+        val lowBattery = LowBattery.listenOnly(batteryPercent(), isCharging(), prefs.lowBatteryAudioPct.first())
         return NetworkPlaybackPolicy(
             maxHeight = cap,
             metered = metered,
             dataSaver = dataSaver,
-            startAudioOnly = dataSaver && prefs.dataSaverAudioOnly.first()
+            startAudioOnly = (dataSaver && prefs.dataSaverAudioOnly.first()) || lowBattery,
+            lowBattery = lowBattery
         )
+    }
+
+    private fun batteryIntent(): android.content.Intent? =
+        runCatching { context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)) }.getOrNull()
+
+    private fun batteryPercent(): Int = batteryIntent()?.let {
+        LowBattery.percent(it.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1), it.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1))
+    } ?: -1
+
+    private fun isCharging(): Boolean = batteryIntent()?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1).let {
+        it == android.os.BatteryManager.BATTERY_STATUS_CHARGING || it == android.os.BatteryManager.BATTERY_STATUS_FULL
     }
 
     companion object {
