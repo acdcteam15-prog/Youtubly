@@ -20,7 +20,7 @@ jobs:
           path: libzt-release.aar
           key: libzt-aar-${{ env.LIBZT_REF }}
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           repository: ${{ env.LIBZT_REPO }}
