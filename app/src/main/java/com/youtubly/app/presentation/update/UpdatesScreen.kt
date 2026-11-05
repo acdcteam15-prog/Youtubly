@@ -114,6 +114,8 @@ fun UpdatesScreen(onBack: () -> Unit, vm: UpdatesViewModel = hiltViewModel()) {
                         LinearProgressIndicator(progress = { s.fraction }, modifier = Modifier.fillMaxWidth())
                         Text("${(s.fraction * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
                     } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    s.note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Text("It keeps going with the screen off.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 is UpdateState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Ready to install ${s.info.versionName}.", style = MaterialTheme.typography.titleSmall)

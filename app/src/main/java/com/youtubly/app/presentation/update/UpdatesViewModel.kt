@@ -35,7 +35,8 @@ class UpdatesViewModel @Inject constructor(
     val currentBuild: Int get() = repository.currentBuild
 
     fun check() { viewModelScope.launch { repository.check() } }
-    fun download(info: ReleaseInfo) { viewModelScope.launch { repository.download(info) } }
+    /** Starts the download as background work (notification, continues with the screen off). */
+    fun download(info: ReleaseInfo) = repository.startDownload(info)
     fun canInstall(): Boolean = repository.canInstall()
     fun allowInstallIntent() = repository.allowInstallIntent()
     fun installIntent(file: File) = repository.installIntent(file)

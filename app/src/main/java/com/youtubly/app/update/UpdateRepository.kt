@@ -17,6 +17,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -33,7 +34,7 @@ sealed interface UpdateState {
     data class UpToDate(val versionName: String, val build: Int) : UpdateState
     data class Available(val info: ReleaseInfo) : UpdateState
     /** [fraction] is 0..1, or -1 when the size isn't known. */
-    data class Downloading(val info: ReleaseInfo, val fraction: Float) : UpdateState
+    data class Downloading(val info: ReleaseInfo, val fraction: Float, val note: String? = null) : UpdateState
     data class Ready(val info: ReleaseInfo, val file: File) : UpdateState
     data class Failed(val message: String) : UpdateState
 }
@@ -111,63 +112,132 @@ class UpdateRepository @Inject constructor(
         }
     }
 
-    /** Downloads the APK of [info], checks its hash and identity, and returns it as [UpdateState.Ready]. */
+    /** The partly downloaded file. It is kept after a dropped connection, so the next try continues from there. */
+    private fun partFileFor(info: ReleaseInfo) = File(updateDir, "Youtubly-${info.build}.apk.part")
+
+    /**
+     * Queues the download as background work with a notification: it goes on with the screen off or the app closed,
+     * and continues from where it stopped if the connection drops or the app is killed.
+     */
+    fun startDownload(info: ReleaseInfo) {
+        _state.value = UpdateState.Downloading(info, if (info.sizeBytes > 0) 0f else -1f)
+        UpdateDownloadWorker.enqueue(context, info)
+    }
+
+    /**
+     * Downloads the APK of [info] (continuing a partial file, retrying a dropped connection), checks its hash and
+     * identity, and returns it as [UpdateState.Ready]. The CPU and Wi-Fi are kept awake meanwhile.
+     */
     suspend fun download(info: ReleaseInfo): UpdateState = withContext(Dispatchers.IO) {
         val token = prefs.githubToken.first()
         _state.value = UpdateState.Downloading(info, if (info.sizeBytes > 0) 0f else -1f)
+        val locks = KeepAwake.acquire(context)
         val outcome = runCatching {
-            val file = apkFile.also { it.delete() }
             // Private repositories need the API address with the token; public ones use the plain link.
             val (url, accept) = if (token.isNotBlank() && info.apkApiUrl != null) info.apkApiUrl to "application/octet-stream"
             else info.apkUrl to "application/octet-stream"
-            if (!url.startsWith("https://")) throw IOException("The update address is not https.")
+            if (!url.startsWith("https://")) throw NoRetryIOException("The update address is not https.")
 
-            val digest = MessageDigest.getInstance("SHA-256")
-            client.newCall(request(url, token, accept)).execute().use { r ->
-                if (!r.isSuccessful) throw IOException("Download failed (${r.code}).")
-                val total = r.body.contentLength().takeIf { it > 0 } ?: info.sizeBytes
-                var done = 0L
-                var lastEmit = 0L
-                r.body.byteStream().use { input ->
-                    file.outputStream().use { out ->
-                        val buf = ByteArray(64 * 1024)
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            out.write(buf, 0, n)
-                            digest.update(buf, 0, n)
-                            done += n
-                            val now = System.currentTimeMillis()
-                            if (now - lastEmit > 200) {
-                                lastEmit = now
-                                _state.value = UpdateState.Downloading(info, if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else -1f)
-                            }
-                        }
-                    }
+            val part = partFileFor(info)
+            updateDir.listFiles { f -> f.name.endsWith(".part") && f.name != part.name }?.forEach { it.delete() }   // another build's leftovers
+            var attempt = 0
+            while (true) {
+                try {
+                    downloadResumable(info, url, accept, token, part)
+                    break
+                } catch (e: NoRetryIOException) {
+                    throw e
+                } catch (e: IOException) {
+                    attempt++
+                    if (attempt > MAX_RETRIES) throw e
+                    val so = (_state.value as? UpdateState.Downloading)?.fraction ?: 0f
+                    _state.value = UpdateState.Downloading(info, so, "Connection dropped - continuing ($attempt of $MAX_RETRIES)...")
+                    delay(3_000L * attempt)
                 }
             }
 
             // Integrity: compare with the published checksum when there is one.
             val expected = fetchChecksum(info, token)
-            val actual = digest.digest().joinToString("") { "%02x".format(it) }
-            if (expected != null && !expected.equals(actual, ignoreCase = true)) {
-                file.delete()
-                throw IOException("The downloaded file is damaged (checksum mismatch). Try again.")
+            if (expected != null && !expected.equals(sha256(part), ignoreCase = true)) {
+                part.delete()
+                throw NoRetryIOException("The downloaded file is damaged (checksum mismatch). Try again.")
             }
+            val file = apkFile.also { it.delete() }
+            if (!part.renameTo(file)) throw IOException("Could not save the update.")
 
             // Identity: it must be this app, at the build the release promised.
             val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
-                ?: run { file.delete(); throw IOException("The downloaded file is not a valid app.") }
-            if (archive.packageName != context.packageName) { file.delete(); throw IOException("The downloaded file is a different app.") }
-            if (archive.longVersionCode != info.build.toLong()) { file.delete(); throw IOException("The downloaded file has an unexpected version.") }
+                ?: run { file.delete(); throw NoRetryIOException("The downloaded file is not a valid app.") }
+            if (archive.packageName != context.packageName) { file.delete(); throw NoRetryIOException("The downloaded file is a different app.") }
+            if (archive.longVersionCode != info.build.toLong()) { file.delete(); throw NoRetryIOException("The downloaded file has an unexpected version.") }
             file
         }
+        KeepAwake.release(locks)
         val next = outcome.fold(
             onSuccess = { UpdateState.Ready(info, it) },
-            onFailure = { UpdateState.Failed(it.message ?: "The update did not work.") }
+            onFailure = { UpdateState.Failed(friendly(it)) }
         )
         _state.value = next
         next
+    }
+
+    /** One connection: continues [part] with a Range request when it already has bytes, and appends what arrives. */
+    private fun downloadResumable(info: ReleaseInfo, url: String, accept: String, token: String, part: File) {
+        val have = if (part.exists()) part.length() else 0L
+        val builder = request(url, token, accept).newBuilder()
+        if (have > 0) builder.header("Range", "bytes=$have-")
+        client.newCall(builder.build()).execute().use { r ->
+            when {
+                r.code == 416 -> {                                   // asked for bytes past the end
+                    if (info.sizeBytes > 0 && have == info.sizeBytes) return   // it was already complete
+                    part.delete()
+                    throw IOException("Starting the download again")
+                }
+                r.code in 400..499 && r.code != 408 && r.code != 429 -> throw NoRetryIOException("Download failed (${r.code}).")
+                !r.isSuccessful -> throw IOException("Download failed (${r.code}).")
+            }
+            val resumed = r.code == 206 && have > 0
+            if (!resumed) part.delete()                              // the server sent the whole file from the start
+            val start = if (resumed) have else 0L
+            val length = r.body.contentLength()
+            val total = if (length > 0) start + length else info.sizeBytes
+            var done = start
+            var lastEmit = 0L
+            r.body.byteStream().use { input ->
+                java.io.FileOutputStream(part, resumed).use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        done += n
+                        val now = System.currentTimeMillis()
+                        if (now - lastEmit > 200) {
+                            lastEmit = now
+                            _state.value = UpdateState.Downloading(info, if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else -1f)
+                        }
+                    }
+                }
+            }
+            if (total > 0 && done < total) throw IOException("The connection closed early")   // retried, continuing from here
+        }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) { val n = input.read(buf); if (n < 0) break; digest.update(buf, 0, n) }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun friendly(t: Throwable): String = when {
+        t is NoRetryIOException -> t.message ?: "The update did not work."
+        t is java.net.SocketException || t is java.net.SocketTimeoutException || t is java.net.UnknownHostException ||
+            t.message?.contains("abort", ignoreCase = true) == true ->
+            "The connection dropped. Tap Try again: the download continues from where it stopped."
+        else -> t.message ?: "The update did not work."
     }
 
     private fun fetchChecksum(info: ReleaseInfo, token: String): String? {
@@ -251,4 +321,33 @@ class UpdateRepository @Inject constructor(
         if (last != currentBuild) prefs.setLastSeenBuild(currentBuild)
     }
 
+    private companion object { const val MAX_RETRIES = 12 }
+}
+
+/** A download failure that retrying cannot fix (wrong address, damaged file, wrong app). */
+class NoRetryIOException(message: String) : IOException(message)
+
+/** Keeps the CPU and Wi-Fi awake while a download runs, so the screen going off does not cut the connection. */
+internal object KeepAwake {
+    class Locks(val cpu: android.os.PowerManager.WakeLock?, val wifi: android.net.wifi.WifiManager.WifiLock?)
+
+    @Suppress("DEPRECATION")
+    fun acquire(context: Context): Locks {
+        val cpu = runCatching {
+            context.getSystemService(android.os.PowerManager::class.java)
+                .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "youtubly:update")
+                .apply { setReferenceCounted(false); acquire(30 * 60_000L) }
+        }.getOrNull()
+        val wifi = runCatching {
+            (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager)
+                .createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "youtubly:update")
+                .apply { setReferenceCounted(false); acquire() }
+        }.getOrNull()
+        return Locks(cpu, wifi)
+    }
+
+    fun release(l: Locks) {
+        runCatching { if (l.cpu?.isHeld == true) l.cpu.release() }
+        runCatching { if (l.wifi?.isHeld == true) l.wifi.release() }
+    }
 }
