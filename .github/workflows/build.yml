@@ -34,7 +34,7 @@ jobs:
       - name: Make the Gradle wrapper executable
         run: chmod +x gradlew
 
-      - uses: gradle/actions/setup-gradle@v5   # also validates gradle-wrapper.jar
+      - uses: gradle/actions/setup-gradle@v6   # also validates gradle-wrapper.jar
 
       - name: Unit tests
         run: ./gradlew --no-daemon :app:testDebugUnitTest
