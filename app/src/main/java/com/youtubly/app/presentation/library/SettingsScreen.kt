@@ -6,6 +6,8 @@ import com.youtubly.app.presentation.components.SimpleTopBar
 import com.youtubly.app.presentation.components.PlainBackground
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
