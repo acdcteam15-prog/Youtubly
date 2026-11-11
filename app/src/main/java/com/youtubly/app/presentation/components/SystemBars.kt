@@ -19,7 +19,7 @@ fun LightStatusBarIcons() {
 }
 
 
-/** Landscape + hidden system bars while [fullscreen]; restores portrait/bars afterwards. */
+/** Hidden system bars while [fullscreen] (the orientation is handled by OrientationEffect); shows them again afterwards. */
 @Composable
 fun FullscreenEffect(fullscreen: Boolean, lockLandscape: Boolean = true) {
     val view = LocalView.current
@@ -28,15 +28,11 @@ fun FullscreenEffect(fullscreen: Boolean, lockLandscape: Boolean = true) {
         val window = activity?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, view) }
         if (fullscreen) {
-            // Not locked when the user got here by rotating (Phase 8 "Rotate to fullscreen"),
-            // so turning the phone back upright can exit again.
-            if (lockLandscape) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             controller?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
         }
         onDispose {
             if (fullscreen) {
-                activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             }
         }

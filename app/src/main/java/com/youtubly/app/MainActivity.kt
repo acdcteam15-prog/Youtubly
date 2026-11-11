@@ -85,6 +85,7 @@ class MainActivity : ComponentActivity() {
         val splash = installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        com.youtubly.app.presentation.components.OrientationState.init(this)      // phones rest in portrait, whatever was saved
         queueResume.start()
         // Hold the splash until we know whether the first-launch model setup must show (no empty frame).
         splash.setKeepOnScreenCondition { blurEngine.setupNeeded.value == null }
@@ -178,6 +179,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-apply the app's orientation (portrait unless a player screen asked otherwise), so a stale landscape request can't linger.
+        requestedOrientation = com.youtubly.app.presentation.components.OrientationState.desired
     }
 
     override fun onNewIntent(intent: Intent) {

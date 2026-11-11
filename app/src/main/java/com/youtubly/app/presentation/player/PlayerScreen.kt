@@ -197,7 +197,8 @@ fun PlayerScreen(
     val playingAudioMode by viewModel.playerController.audioMode.collectAsStateWithLifecycle()
     com.youtubly.app.presentation.components.KeepScreenOnWhilePlaying(viewModel.playerController.player, playingAudioMode)
 
-    var fullscreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // Not saved: a restored app must never come back already in fullscreen / landscape.
+    var fullscreen by remember { mutableStateOf(false) }
     // Touch lock covers the WHOLE screen (not just the video) and swallows back presses too.
     var screenLocked by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val boostDbNow by viewModel.playerController.boostDb.collectAsStateWithLifecycle()
@@ -219,7 +220,10 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(fullscreen) { if (!fullscreen) rotatedIn = false }
-    com.youtubly.app.presentation.components.FullscreenEffect(fullscreen && !inPip, lockLandscape = !rotatedIn)
+    com.youtubly.app.presentation.components.FullscreenEffect(fullscreen && !inPip)
+    com.youtubly.app.presentation.components.OrientationEffect(
+        fullscreen = fullscreen && !inPip, lockLandscape = !rotatedIn, allowRotation = rotatePref || wide
+    )
     androidx.activity.compose.BackHandler(enabled = fullscreen && !screenLocked) { fullscreen = false }
     androidx.activity.compose.BackHandler(enabled = screenLocked && !inPip) { /* swallowed while locked */ }
 

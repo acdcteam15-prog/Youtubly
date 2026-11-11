@@ -83,7 +83,8 @@ fun LocalPlayerScreen(
     val localAudioFile = (state as? LocalPlayerUiState.Ready)?.item?.isAudioOnly == true
     com.youtubly.app.presentation.components.KeepScreenOnWhilePlaying(viewModel.playerController.player, playingAudioMode || localAudioFile)
 
-    var fullscreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // Not saved: a restored app must never come back already in fullscreen / landscape.
+    var fullscreen by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     val abLoop by viewModel.playerController.abLoop.collectAsStateWithLifecycle()
     var autoplayNext by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
@@ -91,6 +92,10 @@ fun LocalPlayerScreen(
     if (showSettings) LocalPlaybackSettingsSheet(viewModel, isAudioOnlyFile = (state as? LocalPlayerUiState.Ready)?.item?.isAudioOnly == true) { showSettings = false }
     var dragY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     com.youtubly.app.presentation.components.FullscreenEffect(fullscreen && !inPip)
+    com.youtubly.app.presentation.components.OrientationEffect(
+        fullscreen = fullscreen && !inPip, lockLandscape = true,
+        allowRotation = com.youtubly.app.presentation.components.LocalWideLayout.current
+    )
     // Screen lock: covers the WHOLE screen (video, title, next/previous, back gesture); only a
     // double-tap anywhere unlocks. Saved so rotating / PiP-ing doesn't silently unlock it.
     var screenLocked by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
