@@ -56,7 +56,7 @@ class AudioLibraryViewModel @Inject constructor(
     fun setSource(s: AudioSource) { _source.value = s }
 
     fun play(startId: String? = null, shuffle: Boolean = false) {
-        val list = tracks.value.orEmpty()
+        val list = tracks.value.orEmpty().filter { !it.filePath.isNullOrEmpty() }
         if (list.isEmpty()) return
         val start = if (shuffle && startId == null) list.indices.random() else list.indexOfFirst { it.id == startId }.coerceAtLeast(0)
         viewModelScope.launch {

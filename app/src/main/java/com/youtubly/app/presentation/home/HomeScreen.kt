@@ -83,9 +83,10 @@ fun HomeScreen(
     val resume by viewModel.continueWatching.collectAsStateWithLifecycle()
     val dismissedResume by viewModel.dismissedResumeId.collectAsStateWithLifecycle()
     val newSubs by viewModel.newSubsCount.collectAsStateWithLifecycle()
-    // Loading already covers both the initial load and any manual pull-to-refresh — reusing
-    // it here means the refresh spinner and the existing skeleton state can never disagree.
-    val refreshing = state is HomeUiState.Loading
+    // Spinner while loading, and while fresh videos load on top of the saved/current feed
+    // (the list stays visible instead of turning into placeholders).
+    val refreshingOnTop by viewModel.refreshing.collectAsStateWithLifecycle()
+    val refreshing = state is HomeUiState.Loading || refreshingOnTop
     // Home tab tapped: reload the feed (the list jumps to the top as the new items arrive).
     var handledTaps by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(HomeRefresh.taps.value) }
     androidx.compose.runtime.LaunchedEffect(Unit) {

@@ -203,7 +203,7 @@ fun SearchScreen(
                         androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
                     }
                 }
-                items(suggestions, key = { it }) { s ->
+                items(suggestions.distinct(), key = { it }) { s ->
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -258,7 +258,7 @@ fun SearchScreen(
                                 }
                                 Spacer(Modifier.height(4.dp))
                                 LazyColumn(contentPadding = PaddingValues(bottom = 120.dp + com.youtubly.app.presentation.components.miniBarClearance())) {
-                                    items(recent, key = { it }) { r ->
+                                    items(recent.distinct(), key = { it }) { r ->
                                         RecentSearchRow(
                                             text = r,
                                             onClick = { submit(r) },

@@ -34,6 +34,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.drawWithContent
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -62,10 +63,23 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var queueResume: com.youtubly.app.playback.QueueResume
 
     // Read once before the first frame so the app doesn't flash the default theme at launch.
-    private val initialThemeMode: String by lazy { kotlinx.coroutines.runBlocking { userPreferences.themeMode.first() } }
-    private val initialAccent: Int by lazy { kotlinx.coroutines.runBlocking { userPreferences.accent.first() } }
-    private val initialDynamic: Boolean by lazy { kotlinx.coroutines.runBlocking { userPreferences.dynamicColor.first() } }
-    private val initialTinted: Boolean by lazy { kotlinx.coroutines.runBlocking { userPreferences.tintedSurfaces.first() } }
+    // One blocking read (all four values come from the same preferences file) instead of four.
+    private val initialTheme: InitialTheme by lazy {
+        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+            kotlinx.coroutines.coroutineScope {
+                val mode = async { userPreferences.themeMode.first() }
+                val accent = async { userPreferences.accent.first() }
+                val dyn = async { userPreferences.dynamicColor.first() }
+                val tint = async { userPreferences.tintedSurfaces.first() }
+                InitialTheme(mode.await(), accent.await(), dyn.await(), tint.await())
+            }
+        }
+    }
+    private class InitialTheme(val mode: String, val accent: Int, val dynamic: Boolean, val tinted: Boolean)
+    private val initialThemeMode get() = initialTheme.mode
+    private val initialAccent get() = initialTheme.accent
+    private val initialDynamic get() = initialTheme.dynamic
+    private val initialTinted get() = initialTheme.tinted
 
     /** A YouTube link from a VIEW/SEND intent, waiting for the NavHost to open it. */
     private val pendingLink = kotlinx.coroutines.flow.MutableStateFlow<com.youtubly.app.core.DeepLink?>(null)

@@ -25,15 +25,22 @@ class YoutublyApplication : Application(), Configuration.Provider, SingletonImag
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject @Named("images") lateinit var imageOkHttpClient: OkHttpClient
-    @Inject lateinit var editRepository: com.youtubly.app.data.repository.EditRepository
-    @Inject lateinit var playlistAutoFinisher: com.youtubly.app.data.repository.PlaylistAutoFinisher
-    @Inject lateinit var blurStore: com.youtubly.app.blur.BlurPreferencesStore
-    @Inject lateinit var musicStore: com.youtubly.app.music.MusicPreferencesStore
-    @Inject lateinit var userPreferences: com.youtubly.app.data.local.datastore.UserPreferences
+    @Inject lateinit var editRepositoryLazy: dagger.Lazy<com.youtubly.app.data.repository.EditRepository>
+    private val editRepository get() = editRepositoryLazy.get()
+    @Inject lateinit var playlistAutoFinisherLazy: dagger.Lazy<com.youtubly.app.data.repository.PlaylistAutoFinisher>
+    private val playlistAutoFinisher get() = playlistAutoFinisherLazy.get()
+    @Inject lateinit var blurStoreLazy: dagger.Lazy<com.youtubly.app.blur.BlurPreferencesStore>
+    private val blurStore get() = blurStoreLazy.get()
+    @Inject lateinit var musicStoreLazy: dagger.Lazy<com.youtubly.app.music.MusicPreferencesStore>
+    private val musicStore get() = musicStoreLazy.get()
+    @Inject lateinit var userPreferencesLazy: dagger.Lazy<com.youtubly.app.data.local.datastore.UserPreferences>
+    private val userPreferences get() = userPreferencesLazy.get()
 
     override fun onCreate() {
         super.onCreate()
         com.youtubly.app.core.ErrorLog.init(this)
+        com.youtubly.app.security.AppLockState.init(this)
+        // Cheap, and must exist before any service posts a notification.
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(Constants.DOWNLOAD_NOTIFICATION_CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW)
@@ -44,14 +51,9 @@ class YoutublyApplication : Application(), Configuration.Provider, SingletonImag
         manager.createNotificationChannel(
             NotificationChannel(Constants.EDITOR_NOTIFICATION_CHANNEL_ID, "Video editor", NotificationManager.IMPORTANCE_LOW)
         )
-        // Videos watched in auto-remove playlists leave them (and finished playlists move to the shelf).
-        playlistAutoFinisher.start()
-        com.youtubly.app.security.AppLockState.init(this)
-        // Per-channel rules: keep the "hidden words" filter current, and look for new videos of auto-download channels.
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
-            userPreferences.channelDefaults.collect { com.youtubly.app.domain.playback.ChannelRulesFilter.update(it) }
-        }
-        com.youtubly.app.download.ChannelAutoDownloadWorker.schedule(this)
+        // Everything below is not needed for the first frame: do it off the main thread so the app opens faster.
+        val bg = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        bg.launch { startBackgroundWork() }
         // Crash loop (two crashes soon after starting): switch the risky features off so the app opens again.
         if (com.youtubly.app.security.CrashGuard.install(this)) {
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
@@ -65,12 +67,24 @@ class YoutublyApplication : Application(), Configuration.Provider, SingletonImag
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
             { com.youtubly.app.security.CrashGuard.markStable(this) }, com.youtubly.app.security.CrashGuard.stableAfterMs()
         )
-        // Twice a day: look for a new build on GitHub and notify once per build.
-        com.youtubly.app.update.UpdateCheckWorker.schedule(this)
+    }
+
+    private suspend fun startBackgroundWork() {
+        // Videos watched in auto-remove playlists leave them (and finished playlists move to the shelf).
+        runCatching { playlistAutoFinisher.start() }
         // Exports queued before a force-stop / reboot continue on the next launch.
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             runCatching { editRepository.resumePendingIfAny() }
         }
+        // Per-channel rules: keep the "hidden words" filter current.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
+            userPreferences.channelDefaults.collect { com.youtubly.app.domain.playback.ChannelRulesFilter.update(it) }
+        }
+        // Background schedules are not urgent: let the first screen settle first.
+        kotlinx.coroutines.delay(3_000)
+        runCatching { com.youtubly.app.download.ChannelAutoDownloadWorker.schedule(this) }
+        // Twice a day: look for a new build on GitHub and notify once per build.
+        runCatching { com.youtubly.app.update.UpdateCheckWorker.schedule(this) }
     }
 
     override val workManagerConfiguration: Configuration

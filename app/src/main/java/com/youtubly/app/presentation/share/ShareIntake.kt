@@ -159,7 +159,7 @@ fun ShareIntakeSheet(url: String, onPlay: () -> Unit, onDismiss: () -> Unit, vie
             Spacer(Modifier.height(12.dp))
             ShareAction(Icons.Rounded.PlayArrow, "Play now", enabled = true) { onDismiss(); onPlay() }
             ShareAction(Icons.Rounded.QueuePlayNext, "Play next", enabled = ready != null) {
-                val v = ready!!.info.video
+                val v = ready?.info?.video ?: return@ShareAction
                 if (viewModel.playerController.playNext(v)) toast("Plays after the current video")
                 else onPlay() // nothing playing: just start it
                 onDismiss()
@@ -167,7 +167,8 @@ fun ShareIntakeSheet(url: String, onPlay: () -> Unit, onDismiss: () -> Unit, vie
             val last by viewModel.lastPlaylist.collectAsStateWithLifecycle()
             last?.let { pl ->
                 ShareAction(Icons.Rounded.PlaylistAdd, "Save to \"${pl.name}\"", enabled = ready != null) {
-                    viewModel.saveTo(pl.id, ready!!.info.video)
+                    val v = ready?.info?.video ?: return@ShareAction
+                    viewModel.saveTo(pl.id, v)
                     toast("Saved to ${pl.name}")
                     onDismiss()
                 }

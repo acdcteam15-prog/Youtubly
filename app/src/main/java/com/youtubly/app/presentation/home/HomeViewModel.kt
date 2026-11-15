@@ -45,8 +45,17 @@ class HomeViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     authRepository: AuthRepository,
     videoRepository: com.youtubly.app.domain.repository.VideoRepository,
-    private val userPreferences: com.youtubly.app.data.local.datastore.UserPreferences
+    private val userPreferences: com.youtubly.app.data.local.datastore.UserPreferences,
+    @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context
 ) : ViewModel() {
+
+    /** Last feed on disk: shown instantly at launch while the fresh one loads. */
+    private val feedCache = HomeFeedCache(java.io.File(context.cacheDir, "home"))
+    private fun Feed.cacheKey() = when (this) { Feed.Home -> "home"; Feed.Subscriptions -> "subs"; is Feed.Explore -> "x_" + category.name }
+
+    /** True while fresh results load on top of what is already shown (cached or previous). */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing
 
     /** Most recent history item that's partly watched — for the "Continue watching" banner. */
     val continueWatching: StateFlow<Video?> = kotlinx.coroutines.flow.combine(
@@ -99,13 +108,16 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             signedInFlow.collect { si ->
                 select(if (si) Feed.Home else Feed.Explore(ExploreCategory.MUSIC), force = true)
-                if (si) refreshSubsBadge() else _newSubsCount.value = 0
+                // Signed in: the Home load refreshes the Subscriptions badge itself (no duplicate request at launch).
+                if (!si) _newSubsCount.value = 0
             }
         }
     }
 
     fun select(feed: Feed, force: Boolean = false) {
         if (!force && feed == _feed.value) return
+        // A different tab must not keep showing the old tab's videos while it loads.
+        if (feed != _feed.value) _uiState.value = HomeUiState.Loading
         _feed.value = feed
         load()
     }
@@ -114,8 +126,14 @@ class HomeViewModel @Inject constructor(
         val feed = _feed.value ?: return
         job?.cancel()
         job = viewModelScope.launch {
-            _uiState.value = HomeUiState.Loading
-            _uiState.value = when (feed) {
+            // Show the saved copy of this feed right away (or keep what is on screen), then refresh.
+            val cached = if (_uiState.value is HomeUiState.Success) null
+                else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { feedCache.read(feed.cacheKey()) }
+            val shown = (_uiState.value as? HomeUiState.Success)?.takeIf { it.videos.isNotEmpty() }
+                ?: cached?.takeIf { it.isNotEmpty() }?.let { HomeUiState.Success(it) }
+            _uiState.value = shown ?: HomeUiState.Loading
+            _refreshing.value = shown != null
+            val result = when (feed) {
                 is Feed.Explore -> getExplore(feed.category).fold(
                     onSuccess = { HomeUiState.Success(it) },
                     onFailure = { HomeUiState.Error(it.readable()) }
@@ -131,6 +149,16 @@ class HomeViewModel @Inject constructor(
                     },
                     onFailure = { HomeUiState.Error(it.readable()) }
                 )
+            }
+            _refreshing.value = false
+            when {
+                result is HomeUiState.Success -> {
+                    _uiState.value = result
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { feedCache.write(feed.cacheKey(), result.videos) }
+                }
+                // Offline or failed: keep showing the saved feed instead of an error page.
+                shown != null && feed == _feed.value -> _uiState.value = shown
+                else -> _uiState.value = result
             }
         }
     }

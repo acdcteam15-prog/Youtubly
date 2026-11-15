@@ -70,7 +70,7 @@ class PlaylistsViewModel @Inject constructor(
             val r = runCatching {
                 val json = repo.exportJson()
                 withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(json.toByteArray()) }
+                    (context.contentResolver.openOutputStream(uri, "wt") ?: error("Could not open the file")).use { it.write(json.toByteArray()) }
                 }
             }
             _messages.emit(if (r.isSuccess) "Playlists exported" else "Export failed: ${r.exceptionOrNull()?.message}")
@@ -81,7 +81,7 @@ class PlaylistsViewModel @Inject constructor(
         viewModelScope.launch {
             val r = runCatching {
                 val json = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() }
+                    (context.contentResolver.openInputStream(uri) ?: error("Could not open the file")).use { it.readBytes().decodeToString() }
                 }
                 repo.importJson(json)
             }

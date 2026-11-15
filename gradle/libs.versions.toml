@@ -1,5 +1,6 @@
 # Single place for every version. Dependabot (see .github/dependabot.yml) opens a PR whenever one is outdated.
 [versions]
+profileinstaller = "1.4.1"
 agp = "9.4.0"
 kotlin = "2.4.21"
 ksp = "2.3.13"
@@ -31,6 +32,7 @@ newpipe = "v0.26.5"
 junit = "4.13.2"
 
 [libraries]
+androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
 desugar = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugar" }
 
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core" }

@@ -110,7 +110,7 @@ class GenderClassifier(private val context: Context) {
     suspend fun import(uri: Uri): Result<ModelInfo> = withContext(Dispatchers.IO) {
         val tmp = File(context.cacheDir, "gender_import.tflite")
         runCatching {
-            context.contentResolver.openInputStream(uri)!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }
+            (context.contentResolver.openInputStream(uri) ?: error("Could not open the file")).use { i -> tmp.outputStream().use { i.copyTo(it) } }
         }.fold(
             onSuccess = { importFromFile(tmp) },
             onFailure = { tmp.delete(); Result.failure(it) },

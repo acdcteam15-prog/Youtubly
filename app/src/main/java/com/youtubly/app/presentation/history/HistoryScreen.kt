@@ -328,7 +328,7 @@ private fun ChannelPickerSheet(channels: List<HistoryChannel>, onPick: (String) 
         }
         val shown = remember(channels, filter) { channels.filter { filter.isBlank() || it.name.contains(filter.trim(), ignoreCase = true) } }
         LazyColumn(contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 32.dp + com.youtubly.app.presentation.components.miniBarClearance())) {
-            items(shown, key = { it.name }) { ch ->
+            items(shown.distinctBy { it.name }, key = { it.name }) { ch ->
                 Row(
                     Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable { onPick(ch.name) }.padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically

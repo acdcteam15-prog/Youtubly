@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
@@ -89,7 +90,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 EmptyState(Icons.Rounded.CheckCircle, "No errors recorded", "Failures and crashes show up here, with the time and details.")
             } else {
                 LazyColumn(contentPadding = PaddingValues(bottom = 24.dp + com.youtubly.app.presentation.components.miniBarClearance())) {
-                    items(entries, key = { it.timeMs.toString() + it.trace.hashCode() }) { ErrorRow(it) }
+                    itemsIndexed(entries, key = { i, e -> "${i}_${e.timeMs}" }) { _, e -> ErrorRow(e) }
                 }
             }
         }
@@ -199,12 +200,12 @@ class BackupViewModel @Inject constructor(
 
     fun exportTo(uri: android.net.Uri) = launchTask("Settings saved") {
         val text = backup.export()
-        withContext(Dispatchers.IO) { ctx.contentResolver.openOutputStream(uri)!!.bufferedWriter().use { it.write(text) } }
+        withContext(Dispatchers.IO) { (ctx.contentResolver.openOutputStream(uri) ?: error("Could not open the file")).bufferedWriter().use { it.write(text) } }
     }
 
     fun importFrom(uri: android.net.Uri) = launchTask(null) {
         val text = withContext(Dispatchers.IO) {
-            ctx.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText().also { t -> require(t.length < 2_000_000) { "File is too large" } } }
+            (ctx.contentResolver.openInputStream(uri) ?: error("Could not open the file")).bufferedReader().use { it.readText().also { t -> require(t.length < 2_000_000) { "File is too large" } } }
         }
         val n = backup.import(text)
         messages.emit("Restored $n settings")
