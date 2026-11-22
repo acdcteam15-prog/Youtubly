@@ -3,7 +3,7 @@
 profileinstaller = "1.4.1"
 agp = "9.4.0"
 kotlin = "2.4.21"
-ksp = "2.3.13"
+ksp = "2.3.14"
 hilt = "2.60.1"
 androidx-hilt = "1.4.0"
 compose = "1.12.1"
